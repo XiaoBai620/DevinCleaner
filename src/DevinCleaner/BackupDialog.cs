@@ -12,6 +12,7 @@ internal sealed class BackupDialog : Form
     private readonly Button restore = DesktopTheme.Button("恢复勾选的会话", primary: true);
     private readonly Button remove = DesktopTheme.Button("删除此备份");
     private readonly Button openFolder = DesktopTheme.Button("打开备份目录");
+    private readonly Button selectAll = DesktopTheme.Button("全选");
     private IReadOnlyList<BackupInfo> items = [];
     private bool busy;
 
@@ -35,15 +36,24 @@ internal sealed class BackupDialog : Form
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3, Padding = new Padding(20, 16, 20, 14) };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
         var left = DesktopTheme.Label("删除前自动生成的备份", 10f, true);
         left.Dock = DockStyle.Fill;
         var right = DesktopTheme.Label("备份中的会话（勾选后恢复）", 10f, true);
         right.Dock = DockStyle.Fill;
+        right.TextAlign = ContentAlignment.MiddleLeft;
+        left.TextAlign = ContentAlignment.MiddleLeft;
+        var rightHeader = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty, Padding = new Padding(0, 0, 0, 4) };
+        rightHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        rightHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        rightHeader.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        selectAll.Anchor = AnchorStyles.Right;
+        rightHeader.Controls.Add(right, 0, 0);
+        rightHeader.Controls.Add(selectAll, 1, 0);
         root.Controls.Add(left, 0, 0);
-        root.Controls.Add(right, 1, 0);
+        root.Controls.Add(rightHeader, 1, 0);
         root.Controls.Add(Frame(backupList, new Padding(0, 0, 10, 0)), 0, 1);
         root.Controls.Add(Frame(sessionList, Padding.Empty), 1, 1);
 
@@ -65,6 +75,7 @@ internal sealed class BackupDialog : Form
 
         backupList.SelectedIndexChanged += (_, _) => RenderSessions();
         sessionList.ItemCheck += (_, _) => BeginInvoke(RenderButtons);
+        selectAll.Click += (_, _) => ToggleAll();
         restore.Click += async (_, _) => await Restore();
         remove.Click += async (_, _) => await DeleteBackup();
         openFolder.Click += (_, _) =>
@@ -90,7 +101,7 @@ internal sealed class BackupDialog : Form
         UseWaitCursor = true;
         status.Text = label;
         status.ForeColor = DesktopTheme.Muted;
-        backupList.Enabled = sessionList.Enabled = restore.Enabled = remove.Enabled = false;
+        backupList.Enabled = sessionList.Enabled = restore.Enabled = remove.Enabled = selectAll.Enabled = false;
         try { await work(); }
         finally
         {
@@ -126,12 +137,30 @@ internal sealed class BackupDialog : Form
         RenderButtons();
     }
 
+    // Indices of sessions that can actually be restored; ones already in the database are skipped.
+    private List<int> Restorable() => Current?.Problem is null
+        ? Current?.Sessions.Select((s, i) => (s, i)).Where(x => x.s.BlockedReason is null).Select(x => x.i).ToList() ?? []
+        : [];
+
+    private void ToggleAll()
+    {
+        var targets = Restorable();
+        var check = !targets.All(sessionList.GetItemChecked);
+        sessionList.BeginUpdate();
+        foreach (var i in targets) sessionList.SetItemChecked(i, check);
+        sessionList.EndUpdate();
+        RenderButtons();
+    }
+
     private void RenderButtons()
     {
         var backup = Current;
-        var restorable = backup?.Sessions.Where((s, i) => s.BlockedReason is null && sessionList.GetItemChecked(i)).Count() ?? 0;
-        restore.Enabled = backup?.Problem is null && restorable > 0;
-        remove.Enabled = backup is not null;
+        var targets = Restorable();
+        var restorable = targets.Count(sessionList.GetItemChecked);
+        restore.Enabled = !busy && backup?.Problem is null && restorable > 0;
+        remove.Enabled = !busy && backup is not null;
+        selectAll.Enabled = !busy && targets.Count > 0;
+        selectAll.Text = targets.Count > 0 && restorable == targets.Count ? "取消全选" : "全选";
         status.Text = items.Count == 0 ? $"还没有备份。备份目录：{cleaner.BackupRoot}"
             : backup?.Problem is { } problem ? problem
             : $"已勾选 {restorable} 个可恢复的会话 · 已存在于当前数据库的会话会被跳过";

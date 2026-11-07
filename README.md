@@ -6,7 +6,7 @@ Windows 桌面小工具：浏览本机 Devin CLI / Devin 桌面版的对话记�
 
 ## 使用
 
-需要 64 位 Windows 10/11 和 [.NET 10 桌面运行时](https://dotnet.microsoft.com/download/dotnet/10.0)。双击 `DevinCleaner.exe` 运行，不占用端口。
+需要 64 位 Windows 10/11 和 [.NET 10 桌面运行时](https://dotnet.microsoft.com/download/dotnet/10.0)。只需要单个 `DevinCleaner.exe`，SQLite 等依赖已打包在内，不需要附带 dll 或数据库文件；放在任意目录双击即可运行，不占用端口。备份保存在 `%LOCALAPPDATA%\DevinCleaner\Backups`，与 exe 所在位置无关。
 
 1. 按标题、工作目录或会话 ID 搜索，也可按状态筛选。点选一行在右侧查看详情，勾选框用于选择要删除的会话。
 2. 点击「查看对话」或双击列表行，以 Devin 风格的聊天窗口只读查看对话主线：你的消息在右侧灰色气泡，Devin 的回复按 Markdown 直接排版；每次工具调用单独一行并显示命令、文件或搜索词，点击展开完整参数和结果；聊天中的截图直接显示，点击看大图；思考过程和系统消息默认隐藏，可切换显示。内容不截断（超过 2 万字的单条消息先显示前 2 万字，点击原位展开）。可拖动选择任意文字（Ctrl+C 复制，Ctrl+A 全选，双击选中整条），右键查看全文或复制整段对话。
