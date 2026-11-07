@@ -63,7 +63,7 @@ internal sealed class ConversationDialog : Form
         Controls.Add(header);
 
         var tip = new ToolTip { AutoPopDelay = 15000 };
-        tip.SetToolTip(chat, "点击灰色条展开工具调用 / 思考过程 · 双击消息查看全文 · 右键复制");
+        tip.SetToolTip(chat, "拖动选择文字，Ctrl+C 复制 · 双击选中整条 · 点击灰色条展开工具调用 / 思考过程 · 右键更多");
         tip.SetToolTip(copyAll, "按当前显示设置复制整段对话为纯文本");
         thinking.CheckedChanged += (_, _) => { chat.ShowThinking = thinking.Checked; };
         system.CheckedChanged += (_, _) => { chat.ShowSystem = system.Checked; };
@@ -98,7 +98,7 @@ internal sealed class ConversationDialog : Form
     private void ShowFull(string title, string content)
     {
         using var dialog = new Form { Text = title, StartPosition = FormStartPosition.CenterParent, Size = new Size(760, 560), MinimumSize = new Size(480, 320), Font = Font, BackColor = DesktopTheme.Canvas, MinimizeBox = false, ShowInTaskbar = false, Padding = new Padding(14) };
-        var text = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = true, BackColor = Color.White, ForeColor = DesktopTheme.Ink, Font = new Font("Microsoft YaHei UI", 9.5f), Text = content.Replace("\r\n", "\n").Replace("\n", "\r\n") };
+        var text = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = true, BackColor = Color.White, ForeColor = DesktopTheme.Ink, Font = new Font("Microsoft YaHei UI", 9.5f), Text = ChatView.Crlf(content) };
         dialog.Controls.Add(text);
         dialog.KeyPreview = true;
         dialog.KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) dialog.Close(); };

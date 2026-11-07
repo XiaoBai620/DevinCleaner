@@ -73,7 +73,7 @@ public sealed partial class Cleaner
         using var db = OpenRead();
         var supported = SchemaSupported(db);
         if (!supported) warnings.Add("sessions.db 的结构与已验证版本不同（Devin 可能已更新），只允许浏览，不能删除。");
-        var stats = Db.Rows(db, "SELECT session_id, count(*), coalesce(sum(length(CAST(chat_message AS BLOB))),0) FROM message_nodes GROUP BY session_id")
+        var stats = Db.Rows(db, "SELECT session_id, count(*), coalesce(sum(octet_length(chat_message)),0) FROM message_nodes GROUP BY session_id")
             .ToDictionary(r => (string)r[0]!, r => ((long)r[1]!, (long)r[2]!));
         var sessions = new List<SessionInfo>();
         foreach (var r in Db.Rows(db, "SELECT id,title,working_directory,model,created_at,last_activity_at,hidden FROM sessions ORDER BY last_activity_at DESC"))
