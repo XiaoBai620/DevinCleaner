@@ -2,15 +2,21 @@ using System.Drawing.Drawing2D;
 
 namespace DevinCleaner;
 
+// Palette taken from the Devin desktop app: near-white canvas, hairline grey borders,
+// near-black primary actions and soft grey hover fills.
 internal static class DesktopTheme
 {
-    public static readonly Color Ink = Color.FromArgb(40, 40, 39);
-    public static readonly Color Muted = Color.FromArgb(113, 113, 109);
-    public static readonly Color Accent = Color.FromArgb(68, 68, 65);
-    public static readonly Color Navy = Color.FromArgb(25, 41, 65);
-    public static readonly Color Canvas = Color.FromArgb(247, 247, 245);
-    public static readonly Color Border = Color.FromArgb(229, 229, 225);
-    public static readonly Font SmallFont = new("Microsoft YaHei UI", 8f);
+    public static readonly Color Ink = Color.FromArgb(23, 23, 23);
+    public static readonly Color Muted = Color.FromArgb(115, 115, 115);
+    public static readonly Color Faint = Color.FromArgb(163, 163, 163);
+    public static readonly Color Accent = Color.FromArgb(64, 64, 64);
+    public static readonly Color Canvas = Color.FromArgb(250, 250, 250);
+    public static readonly Color Border = Color.FromArgb(229, 229, 229);
+    public static readonly Color Hover = Color.FromArgb(244, 244, 244);
+    public static readonly Color Pressed = Color.FromArgb(234, 234, 234);
+    public static readonly Color Success = Color.FromArgb(22, 163, 74);
+    public static readonly Color Warning = Color.FromArgb(180, 110, 20);
+    public static readonly Color Danger = Color.FromArgb(220, 38, 38);
 
     public static Color BackgroundOf(Control? control)
     {
@@ -64,7 +70,7 @@ internal sealed class ThemeButton : Button
         BackColor = Color.Transparent;
         ForeColor = primary ? Color.White : DesktopTheme.Ink;
         Font = new Font("Microsoft YaHei UI", 9f);
-        Padding = new Padding(primary ? 18 : 10, primary ? 10 : 6, primary ? 18 : 10, primary ? 10 : 6);
+        Padding = new Padding(primary ? 16 : 11, 6, primary ? 16 : 11, 6);
         Margin = Padding.Empty;
         Cursor = Cursors.Hand;
         UseMnemonic = false;
@@ -73,7 +79,7 @@ internal sealed class ThemeButton : Button
     public override Size GetPreferredSize(Size proposedSize)
     {
         var text = TextRenderer.MeasureText(Text, Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
-        var height = (int)Math.Round((primary ? 40 : 32) * DeviceDpi / 96f);
+        var height = (int)Math.Round((primary ? 36 : 32) * DeviceDpi / 96f);
         return new Size(Math.Max(MinimumSize.Width, text.Width + Padding.Horizontal + (int)(4 * DeviceDpi / 96f)),
             Math.Max(MinimumSize.Height, Math.Max(height, text.Height + Padding.Vertical)));
     }
@@ -96,20 +102,21 @@ internal sealed class ThemeButton : Button
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var scale = DeviceDpi / 96f;
         var fill = primary
-            ? !Enabled ? Color.FromArgb(234, 234, 230) : pressed ? Color.FromArgb(20, 20, 19) : hovered ? Color.FromArgb(62, 62, 59) : DesktopTheme.Ink
-            : pressed && Enabled ? Color.FromArgb(230, 230, 225) : hovered && Enabled ? Color.FromArgb(241, 241, 237) : Color.Transparent;
-        using var path = DesktopTheme.RoundedRect(new Rectangle(1, 1, Width - 3, Height - 3), (primary ? 10 : 7) * scale);
-        if (fill != Color.Transparent)
+            ? !Enabled ? DesktopTheme.Pressed : pressed ? Color.Black : hovered ? Color.FromArgb(52, 52, 52) : DesktopTheme.Ink
+            : !Enabled ? Color.White : pressed ? DesktopTheme.Pressed : hovered ? DesktopTheme.Hover : Color.White;
+        using var path = DesktopTheme.RoundedRect(new Rectangle(1, 1, Width - 3, Height - 3), 8 * scale);
+        using (var brush = new SolidBrush(fill)) e.Graphics.FillPath(brush, path);
+        if (!primary)
         {
-            using var brush = new SolidBrush(fill);
-            e.Graphics.FillPath(brush, path);
+            using var border = new Pen(DesktopTheme.Border);
+            e.Graphics.DrawPath(border, path);
         }
-        var textColor = !Enabled ? Color.FromArgb(153, 153, 147) : primary ? Color.White : ForeColor;
+        var textColor = !Enabled ? DesktopTheme.Faint : primary ? Color.White : ForeColor;
         TextRenderer.DrawText(e.Graphics, Text, Font, Rectangle.Inflate(ClientRectangle, -(int)(4 * scale), 0), textColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
         if (Focused && ShowFocusCues)
         {
-            using var pen = new Pen(primary ? Color.FromArgb(155, 155, 148) : DesktopTheme.Accent, Math.Max(1, scale));
+            using var pen = new Pen(primary ? DesktopTheme.Faint : DesktopTheme.Accent, Math.Max(1, scale));
             e.Graphics.DrawPath(pen, path);
         }
     }
@@ -164,7 +171,7 @@ internal sealed class SearchField : SurfacePanel
     {
         this.input = input;
         this.clear = clear;
-        CornerRadius = 6;
+        CornerRadius = 8;
         TabStop = false;
         input.Margin = clear.Margin = Padding.Empty;
         Controls.Add(input);
@@ -225,7 +232,7 @@ internal sealed class ClearSearchButton : Button
         if (hovered && Enabled)
         {
             using var shape = DesktopTheme.RoundedRect(new Rectangle(1, 1, Width - 3, Height - 3), 5 * scale);
-            using var fill = new SolidBrush(Color.FromArgb(241, 241, 237));
+            using var fill = new SolidBrush(DesktopTheme.Hover);
             e.Graphics.FillPath(fill, shape);
         }
         using var pen = new Pen(DesktopTheme.Muted, 1.5f * scale);
@@ -275,7 +282,7 @@ internal sealed class FilterComboBox : ComboBox
     {
         if (e.Index < 0) return;
         var selected = (e.State & DrawItemState.Selected) != 0;
-        using var fill = new SolidBrush(selected ? Color.FromArgb(240, 240, 235) : Color.White);
+        using var fill = new SolidBrush(selected ? DesktopTheme.Hover : Color.White);
         e.Graphics.FillRectangle(fill, e.Bounds);
         var inset = (int)(10 * DeviceDpi / 96f);
         var bounds = Rectangle.FromLTRB(e.Bounds.Left + inset, e.Bounds.Top, e.Bounds.Right - inset, e.Bounds.Bottom);
@@ -293,8 +300,8 @@ internal sealed class FilterComboBox : ComboBox
         graphics.Clear(DesktopTheme.BackgroundOf(Parent));
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var scale = DeviceDpi / 96f;
-        using var path = DesktopTheme.RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), 6 * scale);
-        using var fill = new SolidBrush(hovered && Enabled ? Color.FromArgb(249, 249, 246) : Color.White);
+        using var path = DesktopTheme.RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), 8 * scale);
+        using var fill = new SolidBrush(hovered && Enabled ? DesktopTheme.Canvas : Color.White);
         graphics.FillPath(fill, path);
         using var border = new Pen(Focused || DroppedDown ? DesktopTheme.Accent : DesktopTheme.Border);
         graphics.DrawPath(border, path);
@@ -305,5 +312,82 @@ internal sealed class FilterComboBox : ComboBox
         var y = Height / 2f;
         using var arrow = new Pen(DesktopTheme.Muted, 1.5f * scale) { StartCap = LineCap.Round, EndCap = LineCap.Round };
         graphics.DrawLines(arrow, [new PointF(x - 3.5f * scale, y - 1.5f * scale), new PointF(x, y + 2 * scale), new PointF(x + 3.5f * scale, y - 1.5f * scale)]);
+    }
+}
+
+// Pill toggle in the style of Devin's segmented controls; keeps CheckBox semantics.
+internal sealed class PillToggle : CheckBox
+{
+    private bool hovered;
+
+    public PillToggle(string text)
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        Text = text;
+        AutoSize = true;
+        Font = new Font("Microsoft YaHei UI", 9f);
+        Padding = new Padding(12, 0, 12, 0);
+        Cursor = Cursors.Hand;
+        UseMnemonic = false;
+    }
+
+    public override Size GetPreferredSize(Size proposedSize)
+    {
+        var text = TextRenderer.MeasureText(Text, Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
+        return new Size(text.Width + Padding.Horizontal, (int)Math.Round(30 * DeviceDpi / 96f));
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hovered = true; Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hovered = false; Invalidate(); }
+    protected override void OnEnabledChanged(EventArgs e) { base.OnEnabledChanged(e); Invalidate(); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.Clear(DesktopTheme.BackgroundOf(Parent));
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        var rect = new Rectangle(1, 1, Width - 3, Height - 3);
+        using var path = DesktopTheme.RoundedRect(rect, rect.Height / 2f);
+        using (var fill = new SolidBrush(Checked ? DesktopTheme.Ink : hovered && Enabled ? DesktopTheme.Hover : Color.White)) e.Graphics.FillPath(fill, path);
+        if (!Checked) { using var pen = new Pen(DesktopTheme.Border); e.Graphics.DrawPath(pen, path); }
+        var ink = !Enabled ? DesktopTheme.Faint : Checked ? Color.White : DesktopTheme.Accent;
+        TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, ink, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+        if (Focused && ShowFocusCues) { using var pen = new Pen(DesktopTheme.Accent); e.Graphics.DrawPath(pen, path); }
+    }
+}
+
+// The hexagon mark from app.ico (scripts/make_icon.py uses the same geometry).
+internal sealed class DevinLogo : Control
+{
+    private static readonly PointF[] Centres = [new(0.36f, 0.30f), new(0.36f, 0.70f), new(0.70f, 0.50f)];
+    private const float Radius = 0.205f, Notch = 0.075f;
+
+    public DevinLogo()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw, true);
+        BackColor = Color.Transparent;
+        TabStop = false;
+        Margin = Padding.Empty;
+    }
+
+    private static void Draw(Graphics g, RectangleF box, Color ink, Color hole)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var brush = new SolidBrush(ink);
+        foreach (var c in Centres)
+            g.FillPolygon(brush, Enumerable.Range(0, 6).Select(i =>
+            {
+                var a = (-90 + 60 * i) * Math.PI / 180;
+                return new PointF(box.X + (c.X + Radius * (float)Math.Cos(a)) * box.Width, box.Y + (c.Y + Radius * (float)Math.Sin(a)) * box.Height);
+            }).ToArray());
+        using var notch = new SolidBrush(hole);
+        g.FillEllipse(notch, box.X + (0.5f - Notch) * box.Width, box.Y + (0.5f - Notch) * box.Height, 2 * Notch * box.Width, 2 * Notch * box.Height);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var bg = DesktopTheme.BackgroundOf(Parent);
+        e.Graphics.Clear(bg);
+        var side = Math.Min(Width, Height);
+        Draw(e.Graphics, new RectangleF((Width - side) / 2f, (Height - side) / 2f, side, side), DesktopTheme.Ink, bg);
     }
 }

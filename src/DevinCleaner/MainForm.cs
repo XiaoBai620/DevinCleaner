@@ -17,7 +17,7 @@ internal sealed class MainForm : Form
     private readonly Button checkUpdates = DesktopTheme.Button("检查更新");
     private readonly Button downloadUpdate = DesktopTheme.Button("前往更新");
     private readonly Label updateNotice = DesktopTheme.Label("", 9.5f, true);
-    private readonly Panel updateBanner = new() { Dock = DockStyle.Fill, Padding = new Padding(14, 6, 14, 6), Margin = new Padding(0, 8, 0, 0), BackColor = Color.FromArgb(239, 239, 234), Visible = false };
+    private readonly SurfacePanel updateBanner = new() { Dock = DockStyle.Fill, Padding = new Padding(14, 6, 10, 6), Margin = new Padding(0, 4, 0, 8), CornerRadius = 10, Visible = false };
     private readonly RowStyle updateRowStyle = new(SizeType.Absolute, 0);
     private AvailableUpdate? availableUpdate;
     private bool checkingUpdate;
@@ -50,6 +50,8 @@ internal sealed class MainForm : Form
     private const string LocksHintText = "会话删除后遗留的占用标记，删了不影响对话";
     private readonly ToolTip tip = new() { AutoPopDelay = 20000, InitialDelay = 400, ReshowDelay = 100, ShowAlways = true };
     private readonly System.Windows.Forms.Timer processTimer = new() { Interval = 3000 };
+    private readonly System.Windows.Forms.Timer busyTimer = new() { Interval = 500 };
+    private readonly Stopwatch busyClock = new();
     private Snapshot? state;
     private List<string> diagnostics = [];
     private string? focusedId;
@@ -125,6 +127,7 @@ internal sealed class MainForm : Form
             catch (ExternalException) { MessageBox.Show(this, "剪贴板暂时被其他程序占用，请稍后重试。", "无法复制", MessageBoxButtons.OK, MessageBoxIcon.Information); }
         };
         processTimer.Tick += async (_, _) => await RefreshProcessState();
+        busyTimer.Tick += (_, _) => RenderSelection();
         Shown += async (_, _) =>
         {
             ApplyGridMetrics();
@@ -136,7 +139,7 @@ internal sealed class MainForm : Form
         DpiChanged += (_, _) => BeginInvoke(() =>
         {
             ApplyGridMetrics();
-            if (availableUpdate is not null) updateRowStyle.Height = 52 * DeviceDpi / 96f;
+            if (availableUpdate is not null) updateRowStyle.Height = 56 * DeviceDpi / 96f;
         });
         KeyDown += async (_, e) =>
         {
@@ -179,10 +182,13 @@ internal sealed class MainForm : Form
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var brand = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Anchor = AnchorStyles.Left, Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Color.Transparent };
+        brand.Controls.Add(new DevinLogo { Size = new Size(24, 24), Margin = new Padding(0, 4, 8, 0) });
         var title = DesktopTheme.Label("DevinCleaner", 11.5f, true);
         title.AutoSize = true;
-        title.Anchor = AnchorStyles.Left;
-        header.Controls.Add(title, 0, 0);
+        title.Margin = new Padding(0, 5, 0, 0);
+        brand.Controls.Add(title);
+        header.Controls.Add(brand, 0, 0);
         var badge = DesktopTheme.Label($"v{version.Major}.{version.Minor}.{version.Build}", 8f);
         badge.AutoSize = true;
         badge.Anchor = AnchorStyles.Left;
@@ -204,7 +210,7 @@ internal sealed class MainForm : Form
         updateNotice.Dock = DockStyle.Fill;
         updateNotice.TextAlign = ContentAlignment.MiddleLeft;
         updateNotice.AutoEllipsis = true;
-        updateNotice.ForeColor = DesktopTheme.Accent;
+        updateNotice.ForeColor = DesktopTheme.Ink;
         downloadUpdate.Anchor = AnchorStyles.Right;
         row.Controls.Add(updateNotice, 0, 0);
         row.Controls.Add(downloadUpdate, 1, 0);
@@ -224,7 +230,7 @@ internal sealed class MainForm : Form
             if (IsDisposed || updateCancellation.IsCancellationRequested) return;
             availableUpdate = update;
             updateBanner.Visible = update is not null;
-            updateRowStyle.Height = update is null ? 0 : 52 * DeviceDpi / 96f;
+            updateRowStyle.Height = update is null ? 0 : 56 * DeviceDpi / 96f;
             if (update is not null)
             {
                 updateNotice.Text = $"发现新版本 v{update.Version} · 当前 v{UpdateChecker.CurrentVersion}";
@@ -287,7 +293,7 @@ internal sealed class MainForm : Form
 
     private Control BuildListPanel()
     {
-        var card = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(15, 12, 15, 8), Margin = new Padding(0, 0, 12, 0), CornerRadius = 8 };
+        var card = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(16, 12, 16, 8), Margin = new Padding(0, 0, 12, 0), CornerRadius = 12 };
         var panel = CreateLayout(1, 4);
         panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
         panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
@@ -351,13 +357,13 @@ internal sealed class MainForm : Form
         list.BackgroundColor = Color.White;
         list.BorderStyle = BorderStyle.None;
         list.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
-        list.GridColor = Color.FromArgb(240, 240, 236);
+        list.GridColor = Color.FromArgb(242, 242, 242);
         list.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
         list.EnableHeadersVisualStyles = false;
         list.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
         list.ColumnHeadersHeight = 36;
-        list.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.FromArgb(249, 249, 247), ForeColor = DesktopTheme.Muted, Font = new Font("Microsoft YaHei UI", 8.5f), SelectionBackColor = Color.FromArgb(249, 249, 247), Padding = new Padding(5, 0, 0, 0) };
-        list.DefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.White, ForeColor = DesktopTheme.Ink, Font = new Font("Microsoft YaHei UI", 9.5f), SelectionBackColor = Color.FromArgb(241, 241, 235), SelectionForeColor = DesktopTheme.Ink, Padding = new Padding(5, 0, 0, 0) };
+        list.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.White, ForeColor = DesktopTheme.Faint, Font = new Font("Microsoft YaHei UI", 8.5f), SelectionBackColor = Color.White, Padding = new Padding(5, 0, 0, 0) };
+        list.DefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.White, ForeColor = DesktopTheme.Ink, Font = new Font("Microsoft YaHei UI", 9.5f), SelectionBackColor = DesktopTheme.Hover, SelectionForeColor = DesktopTheme.Ink, Padding = new Padding(5, 0, 0, 0) };
         list.RowTemplate.Height = 43;
         list.RowHeadersVisible = false;
         list.ReadOnly = true;
@@ -381,7 +387,7 @@ internal sealed class MainForm : Form
         var sidebar = CreateLayout(1, 2);
         sidebar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         sidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 128));
-        var detailCard = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(16, 12, 12, 13), Margin = new Padding(0, 0, 0, 12), CornerRadius = 8 };
+        var detailCard = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(16, 12, 12, 13), Margin = new Padding(0, 0, 0, 12), CornerRadius = 12 };
         var detailLayout = CreateLayout(1, 4);
         detailLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         detailLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
@@ -418,7 +424,7 @@ internal sealed class MainForm : Form
         detailCard.Controls.Add(detailLayout);
         sidebar.Controls.Add(detailCard, 0, 0);
 
-        var options = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(16, 12, 16, 11), Margin = Padding.Empty, CornerRadius = 8 };
+        var options = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(16, 12, 16, 11), Margin = Padding.Empty, CornerRadius = 12 };
         var optionLayout = CreateLayout(1, 4);
         optionLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
         optionLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
@@ -474,10 +480,10 @@ internal sealed class MainForm : Form
     private static string StatusText(SessionInfo s) => s.Running ? "运行中" : !s.CanDelete ? "受保护" : s.Hidden ? "已隐藏" : "本地会话";
 
     private static (Color Ink, Color Fill) StatusColors(SessionInfo s) => s.Running
-        ? (Color.FromArgb(152, 94, 19), Color.FromArgb(255, 246, 224))
-        : !s.CanDelete ? (Color.FromArgb(140, 66, 66), Color.FromArgb(253, 237, 237))
-        : s.Hidden ? (Color.FromArgb(112, 84, 158), Color.FromArgb(244, 239, 252))
-        : (Color.FromArgb(42, 107, 92), Color.FromArgb(234, 247, 241));
+        ? (DesktopTheme.Warning, Color.FromArgb(254, 247, 232))
+        : !s.CanDelete ? (Color.FromArgb(185, 28, 28), Color.FromArgb(254, 242, 242))
+        : s.Hidden ? (DesktopTheme.Muted, DesktopTheme.Hover)
+        : (Color.FromArgb(21, 128, 61), Color.FromArgb(240, 253, 244));
 
     private void PaintStatus(object? sender, DataGridViewCellPaintingEventArgs e)
     {
@@ -485,13 +491,16 @@ internal sealed class MainForm : Form
         e.PaintBackground(e.ClipBounds, true);
         var (ink, fill) = StatusColors(session);
         var scale = DeviceDpi / 96f;
-        var inset = Math.Max(2, (int)(e.CellBounds.Height * 0.19f));
+        var inset = Math.Max(2, (int)(e.CellBounds.Height * 0.24f));
         var pill = new Rectangle(e.CellBounds.Left + (int)(5 * scale), e.CellBounds.Top + inset, e.CellBounds.Width - (int)(13 * scale), e.CellBounds.Height - 2 * inset);
         if (pill.Width > 0 && pill.Height > 0)
         {
+            var smoothing = e.Graphics.SmoothingMode;
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             using var brush = new SolidBrush(fill);
-            using var path = DesktopTheme.RoundedRect(pill, 5 * scale);
+            using var path = DesktopTheme.RoundedRect(pill, pill.Height / 2f);
             e.Graphics.FillPath(brush, path);
+            e.Graphics.SmoothingMode = smoothing;
             TextRenderer.DrawText(e.Graphics, StatusText(session), e.CellStyle?.Font ?? list.Font, pill, ink, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         }
         e.Handled = true;
@@ -598,9 +607,9 @@ internal sealed class MainForm : Form
         var parts = new List<string>();
         if (selected.Count > 0) parts.Add($"已选 {selected.Count} 个会话（{Cleaner.FormatBytes(bytes)}）");
         if (cleanLocks.Checked) parts.Add("孤立锁文件");
-        summary.Text = busy ? activity : parts.Count > 0 ? string.Join("  +  ", parts) : "尚未选择清理内容";
+        summary.Text = busy ? $"{activity}…  {busyClock.Elapsed.TotalSeconds:0} 秒" : parts.Count > 0 ? string.Join("  +  ", parts) : "尚未选择清理内容";
         selectionCount.Text = hidden > 0 ? $"筛选外仍有 {hidden} 个已选" : "先预览，再确认 · 删除前自动备份，可在「备份与恢复」中找回";
-        selectionCount.ForeColor = hidden > 0 ? Color.FromArgb(152, 94, 19) : DesktopTheme.Muted;
+        selectionCount.ForeColor = hidden > 0 ? DesktopTheme.Warning : DesktopTheme.Muted;
         tip.SetToolTip(summary, summary.Text);
         tip.SetToolTip(selectionCount, selectionCount.Text);
         var supported = state?.Supported == true;
@@ -622,21 +631,31 @@ internal sealed class MainForm : Form
         if (busy) return;
         busy = true;
         activity = label;
+        busyClock.Restart();
+        busyTimer.Start();
         UseWaitCursor = true;
         RenderSelection();
         try { await action(); }
         catch (Exception e) when (e is CleanerException or IOException or UnauthorizedAccessException or SqliteException)
         {
-            if (!IsDisposed) MessageBox.Show(this, e.Message, "操作未完成", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!IsDisposed) { busyTimer.Stop(); MessageBox.Show(this, e.Message, "操作未完成", MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
         finally
         {
             busy = false;
+            busyTimer.Stop();
             if (!IsDisposed) { UseWaitCursor = false; RenderSelection(); }
         }
     }
 
-    private Task Reload() => Run("正在读取本地会话…", LoadState);
+    private void SetActivity(string label)
+    {
+        activity = label;
+        busyClock.Restart();
+        if (!IsDisposed) RenderSelection();
+    }
+
+    private Task Reload() => Run("正在读取本地会话", LoadState);
 
     private async Task LoadState()
     {
@@ -675,7 +694,7 @@ internal sealed class MainForm : Form
             {
                 processTitle.Text = "状态待确认";
                 processDetail.Text = "执行前会逐个检查会话锁。";
-                processDot.ForeColor = Color.FromArgb(152, 94, 19);
+                processDot.ForeColor = DesktopTheme.Warning;
                 tip.SetToolTip(processDetail, e.Message);
             }
         }
@@ -685,7 +704,7 @@ internal sealed class MainForm : Form
     private void SetProcess(ProcessState process)
     {
         var running = state?.Sessions.Count(s => s.Running) ?? 0;
-        processDot.ForeColor = process.Running ? Color.FromArgb(185, 119, 27) : Color.FromArgb(42, 133, 87);
+        processDot.ForeColor = process.Running ? DesktopTheme.Warning : DesktopTheme.Success;
         processTitle.Text = process.Running ? "Devin 正在运行" : "准备就绪";
         processDetail.Text = process.Running ? $"{running} 个会话运行中，将被跳过 · 其他会话可直接清理" : "未检测到 Devin 进程";
         tip.SetToolTip(processTitle, process.Running ? string.Join(Environment.NewLine, process.Processes) : "未检测到 Devin 相关进程。");
@@ -705,16 +724,20 @@ internal sealed class MainForm : Form
         dialog.ShowDialog(this);
     }
 
-    private Task PreviewCleanup() => Run("正在生成清理预览…", async () =>
+    private Task PreviewCleanup() => Run("正在生成清理预览", async () =>
     {
         var plan = await Task.Run(() => cleaner.PlanCleanup(new Selection([.. selected], cleanLocks.Checked)));
+        busyTimer.Stop();
         if (!Confirm(plan)) return;
-        activity = "正在执行清理，请稍候…";
-        RenderSelection();
-        var result = await Task.Run(() => cleaner.Execute(plan.Id));
+        busyTimer.Start();
+        var stages = new Progress<string>(SetActivity);
+        SetActivity("正在执行清理");
+        var result = await Task.Run(() => cleaner.Execute(plan.Id, stages));
         selected.Clear();
         cleanLocks.Checked = false;
+        SetActivity("正在刷新会话列表");
         await LoadState();
+        busyTimer.Stop();
         var message = new List<string>();
         if (result.DeletedSessions > 0) message.Add($"已删除 {result.DeletedSessions} 个会话。\n备份：{result.BackupPath}");
         if (plan.Selection.CleanOrphanLocks) message.Add($"已删除 {result.RemovedLocks} 个孤立锁文件。");
@@ -735,9 +758,10 @@ internal sealed class MainForm : Form
         finally { if (!IsDisposed) UseWaitCursor = true; }
     }
 
-    private Task ShowBackups() => Run("正在读取备份…", async () =>
+    private Task ShowBackups() => Run("正在使用备份与恢复", async () =>
     {
         UseWaitCursor = false;
+        busyTimer.Stop();
         bool changed;
         using (var dialog = new BackupDialog(cleaner)) { dialog.ShowDialog(this); changed = dialog.Changed; }
         if (changed) await LoadState();
@@ -751,6 +775,7 @@ internal sealed class MainForm : Form
             updateCancellation.Dispose();
             processTimer.Stop();
             processTimer.Dispose();
+            busyTimer.Dispose();
             tip.Dispose();
         }
         base.Dispose(disposing);

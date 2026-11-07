@@ -7,8 +7,8 @@ internal sealed class ConversationDialog : Form
 {
     private readonly ChatView chat = new() { Dock = DockStyle.Fill };
     private readonly Label meta = DesktopTheme.Label("正在读取…", 8.5f);
-    private readonly CheckBox thinking = new() { Text = "显示思考过程", AutoSize = true, ForeColor = DesktopTheme.Ink, Enabled = false };
-    private readonly CheckBox system = new() { Text = "显示系统消息", AutoSize = true, ForeColor = DesktopTheme.Ink, Enabled = false };
+    private readonly CheckBox thinking = new PillToggle("思考过程") { Enabled = false };
+    private readonly CheckBox system = new PillToggle("系统消息") { Enabled = false };
     private readonly Button copyAll = DesktopTheme.Button("复制全部");
 
     public ConversationDialog(Cleaner cleaner, SessionInfo session)
@@ -17,22 +17,24 @@ internal sealed class ConversationDialog : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = $"对话 · {session.Title}";
         Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
-        Size = new Size(900, 760);
-        MinimumSize = new Size(560, 420);
+        Size = new Size(1000, 800);
+        MinimumSize = new Size(600, 440);
         StartPosition = FormStartPosition.CenterParent;
-        BackColor = DesktopTheme.Canvas;
+        BackColor = Color.White;
         ForeColor = DesktopTheme.Ink;
         Font = new Font("Microsoft YaHei UI", 9f);
         ShowInTaskbar = false;
         KeyPreview = true;
 
-        var header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 64, ColumnCount = 4, RowCount = 2, Padding = new Padding(20, 10, 16, 6), BackColor = Color.White };
+        var header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 64, ColumnCount = 5, RowCount = 2, Padding = new Padding(18, 10, 16, 8), BackColor = Color.White };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 34));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        for (var i = 0; i < 3; i++) header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         header.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
         header.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
+        var logo = new DevinLogo { Dock = DockStyle.Fill, Margin = new Padding(0, 6, 10, 6) };
+        header.Controls.Add(logo, 0, 0);
+        header.SetRowSpan(logo, 2);
         var title = DesktopTheme.Label(session.Title, 11f, true);
         title.Dock = DockStyle.Fill;
         title.AutoEllipsis = true;
@@ -40,22 +42,17 @@ internal sealed class ConversationDialog : Form
         meta.Dock = DockStyle.Fill;
         meta.AutoEllipsis = true;
         meta.TextAlign = ContentAlignment.MiddleLeft;
-        header.Controls.Add(title, 0, 0);
-        header.Controls.Add(meta, 0, 1);
-        foreach (var box in new[] { thinking, system })
+        header.Controls.Add(title, 1, 0);
+        header.Controls.Add(meta, 1, 1);
+        var col = 2;
+        foreach (var c in new Control[] { thinking, system, copyAll })
         {
-            box.Anchor = AnchorStyles.Right;
-            box.Margin = new Padding(12, 0, 0, 0);
+            c.Anchor = AnchorStyles.Right;
+            c.Margin = new Padding(8, 0, 0, 0);
+            header.Controls.Add(c, col++, 0);
+            header.SetRowSpan(c, 2);
         }
-        copyAll.Anchor = AnchorStyles.Right;
-        copyAll.Margin = new Padding(12, 0, 0, 0);
         copyAll.Enabled = false;
-        header.Controls.Add(thinking, 1, 0);
-        header.Controls.Add(system, 2, 0);
-        header.Controls.Add(copyAll, 3, 0);
-        header.SetRowSpan(thinking, 2);
-        header.SetRowSpan(system, 2);
-        header.SetRowSpan(copyAll, 2);
         var divider = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = DesktopTheme.Border };
 
         Controls.Add(chat);
@@ -63,12 +60,15 @@ internal sealed class ConversationDialog : Form
         Controls.Add(header);
 
         var tip = new ToolTip { AutoPopDelay = 15000 };
-        tip.SetToolTip(chat, "拖动选择文字，Ctrl+C 复制 · 双击选中整条 · 点击灰色条展开工具调用 / 思考过程 · 右键更多");
-        tip.SetToolTip(copyAll, "按当前显示设置复制整段对话为纯文本");
-        thinking.CheckedChanged += (_, _) => { chat.ShowThinking = thinking.Checked; };
-        system.CheckedChanged += (_, _) => { chat.ShowSystem = system.Checked; };
+        tip.SetToolTip(chat, "拖动选择文字，Ctrl+C 复制 · 双击选中整条 · 点击工具调用行展开参数和结果 · 点击图片看大图 · 右键更多");
+        tip.SetToolTip(copyAll, "按当前显示设置复制整段对话为纯文本（完整原文，不截断）");
+        tip.SetToolTip(thinking, "显示 Devin 的思考过程");
+        tip.SetToolTip(system, "显示系统提示和规则等系统消息");
+        thinking.CheckedChanged += (_, _) => chat.ShowThinking = thinking.Checked;
+        system.CheckedChanged += (_, _) => chat.ShowSystem = system.Checked;
         copyAll.Click += (_, _) => ChatView.Copy(chat.Transcript());
         chat.OpenFull += ShowFull;
+        chat.OpenImage += ShowImage;
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
         FormClosed += (_, _) => tip.Dispose();
 
@@ -82,11 +82,13 @@ internal sealed class ConversationDialog : Form
                 chat.SetMessages(messages);
                 var users = messages.Count(m => m.Role == ChatRole.User);
                 var tools = messages.Where(m => m.Role == ChatRole.Assistant).Sum(m => m.ToolCalls.Count);
-                meta.Text = $"{session.WorkingDirectory}  ·  {users} 次提问 · {tools} 次工具调用  ·  只读，不会修改数据";
+                var images = messages.Sum(m => m.Images.Count + m.ToolCalls.Sum(c => c.Images.Count));
+                meta.Text = $"{session.WorkingDirectory}  ·  {users} 次提问 · {tools} 次工具调用" + (images > 0 ? $" · {images} 张图片" : "") + "  ·  只读";
+                tip.SetToolTip(meta, meta.Text);
                 if (users == 0 && chat.TurnCount == 0) chat.Placeholder = "这个会话的主线里没有可显示的对话。";
                 thinking.Enabled = system.Enabled = copyAll.Enabled = true;
             }
-            catch (Exception e) when (e is CleanerException or SqliteException or IOException or System.Text.Json.JsonException)
+            catch (Exception e) when (e is CleanerException or SqliteException or IOException or System.Text.Json.JsonException or FormatException)
             {
                 if (IsDisposed) return;
                 meta.Text = "读取失败";
@@ -97,12 +99,31 @@ internal sealed class ConversationDialog : Form
 
     private void ShowFull(string title, string content)
     {
-        using var dialog = new Form { Text = title, StartPosition = FormStartPosition.CenterParent, Size = new Size(760, 560), MinimumSize = new Size(480, 320), Font = Font, BackColor = DesktopTheme.Canvas, MinimizeBox = false, ShowInTaskbar = false, Padding = new Padding(14) };
-        var text = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = true, BackColor = Color.White, ForeColor = DesktopTheme.Ink, Font = new Font("Microsoft YaHei UI", 9.5f), Text = ChatView.Crlf(content) };
+        using var dialog = new Form { Text = title, StartPosition = FormStartPosition.CenterParent, Size = new Size(860, 620), MinimumSize = new Size(480, 320), Font = Font, BackColor = Color.White, MinimizeBox = false, ShowInTaskbar = false, ShowIcon = false, Padding = new Padding(16) };
+        var text = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = true, BorderStyle = BorderStyle.None, MaxLength = 0, BackColor = Color.White, ForeColor = DesktopTheme.Ink, Font = new Font("Consolas", 10f), Text = ChatView.Crlf(content) };
         dialog.Controls.Add(text);
         dialog.KeyPreview = true;
         dialog.KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) dialog.Close(); };
         dialog.Shown += (_, _) => { text.SelectionStart = 0; text.SelectionLength = 0; };
+        dialog.ShowDialog(this);
+    }
+
+    private void ShowImage(Image image)
+    {
+        var screen = Screen.FromControl(this).WorkingArea;
+        using var dialog = new Form
+        {
+            Text = $"图片 · {image.Width}×{image.Height}", StartPosition = FormStartPosition.CenterParent, BackColor = DesktopTheme.Canvas, MinimizeBox = false, ShowInTaskbar = false, ShowIcon = false, KeyPreview = true,
+            ClientSize = new Size(Math.Min(image.Width + 32, screen.Width * 9 / 10), Math.Min(image.Height + 32, screen.Height * 9 / 10)), MinimumSize = new Size(320, 240), Padding = new Padding(16),
+        };
+        var picture = new PictureBox { Dock = DockStyle.Fill, Image = image, SizeMode = PictureBoxSizeMode.Zoom, BackColor = DesktopTheme.Canvas, Cursor = Cursors.Hand };
+        var menu = new ContextMenuStrip { ShowImageMargin = false };
+        menu.Items.Add("复制图片", null, (_, _) => ChatView.CopyImage(image));
+        picture.ContextMenuStrip = menu;
+        picture.Click += (_, _) => dialog.Close();
+        dialog.Controls.Add(picture);
+        dialog.KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) dialog.Close(); };
+        dialog.FormClosed += (_, _) => { picture.Image = null; menu.Dispose(); };
         dialog.ShowDialog(this);
     }
 }

@@ -4,10 +4,10 @@ namespace DevinCleaner;
 
 internal sealed class ConfirmDialog : Form
 {
-    private static readonly Color Ink = Color.FromArgb(25, 39, 62);
-    private static readonly Color Muted = Color.FromArgb(101, 116, 139);
-    private static readonly Color Canvas = Color.FromArgb(244, 247, 251);
-    private static readonly Color Danger = Color.FromArgb(190, 55, 64);
+    private static readonly Color Ink = DesktopTheme.Ink;
+    private static readonly Color Muted = DesktopTheme.Muted;
+    private static readonly Color Canvas = DesktopTheme.Canvas;
+    private static readonly Color Danger = DesktopTheme.Danger;
     private readonly Plan plan;
     private readonly Func<string, bool> isRunning;
     private readonly Button confirm;
@@ -24,6 +24,7 @@ internal sealed class ConfirmDialog : Form
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = "核对清理范围";
+        ShowIcon = false;
         ClientSize = new Size(960, 640);
         MinimumSize = new Size(820, 560);
         BackColor = Canvas;
@@ -61,7 +62,7 @@ internal sealed class ConfirmDialog : Form
         root.Controls.Add(new Label
         {
             Dock = DockStyle.Fill, Padding = new Padding(12, 9, 12, 9), Margin = new Padding(0, 2, 0, 10),
-            BackColor = Color.FromArgb(234, 240, 253), ForeColor = Ink, TextAlign = ContentAlignment.MiddleLeft,
+            BackColor = DesktopTheme.Hover, ForeColor = Ink, TextAlign = ContentAlignment.MiddleLeft,
             Text = plan.Sessions.Count > 0 ? "删除前会先备份所选会话，之后可在「备份与恢复」中找回。正在运行的会话会被拒绝。" : "本次不删除会话，只执行下方列出的维护操作。",
         }, 0, 2);
 
@@ -150,7 +151,7 @@ internal sealed class ConfirmDialog : Form
             Margin = new Padding(10, 0, 0, 0), Cursor = Cursors.Hand, UseVisualStyleBackColor = false,
         };
         button.FlatAppearance.BorderSize = back == Color.White ? 1 : 0;
-        button.FlatAppearance.BorderColor = Color.FromArgb(218, 225, 235);
+        button.FlatAppearance.BorderColor = DesktopTheme.Border;
         return button;
     }
 
@@ -167,7 +168,7 @@ internal sealed class ConfirmDialog : Form
             gate.Text = expired ? "预览已过期，请返回重新预览。"
                 : running.Count > 0 ? $"会话「{running[0]}」{(running.Count > 1 ? $"等 {running.Count} 个" : "")}正在运行，关闭后将自动允许确认。"
                 : $"可以执行 · 此预览有效至 {plan.ExpiresAt.ToLocalTime():HH:mm}";
-            gate.ForeColor = expired || running.Count > 0 ? Color.FromArgb(152, 94, 29) : Color.FromArgb(29, 123, 90);
+            gate.ForeColor = expired || running.Count > 0 ? DesktopTheme.Warning : DesktopTheme.Success;
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {

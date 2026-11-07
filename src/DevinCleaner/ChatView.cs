@@ -5,28 +5,42 @@ using DevinCleaner.Engine;
 
 namespace DevinCleaner;
 
-// Owner-drawn chat transcript: user bubbles on the right, Devin on the left.
-// Text is laid out per character so it can be selected by dragging; only blocks
-// inside the viewport are painted, so long sessions stay responsive.
+// Owner-drawn transcript in the Devin desktop style: a centred reading column, user turns
+// in soft grey bubbles on the right, Devin's replies as plain text, and every tool call as
+// its own collapsible row. Text is laid out per character so it can be selected by
+// dragging; layouts are cached per width and only blocks in the viewport are painted.
 internal sealed class ChatView : Control
 {
-    private const int DisplayLimit = 6000;
-    private static readonly Font BodyFont = new("Microsoft YaHei UI", 9.5f);
-    private static readonly Font NoteFont = new("Microsoft YaHei UI", 8.5f);
-    private static readonly Font ThinkingFont = new("Microsoft YaHei UI", 8.5f, FontStyle.Italic);
-    private static readonly Font CaptionFont = new("Microsoft YaHei UI", 8f);
+    // Longer messages show this many characters first and expand in place on request.
+    internal const int PreviewLimit = 20_000;
+    private static readonly Font BodyFont = new("Microsoft YaHei UI", 10f);
+    private static readonly Font NoteFont = new("Microsoft YaHei UI", 9f);
+    private static readonly Font NoteBold = new("Microsoft YaHei UI", 9f, FontStyle.Bold);
+    private static readonly Font ThinkingFont = new("Microsoft YaHei UI", 9f, FontStyle.Italic);
+    private static readonly Font CaptionFont = new("Microsoft YaHei UI", 8.5f);
+    private static readonly Color UserFill = Color.FromArgb(242, 242, 242);
+    private static readonly Color CodeFill = Color.FromArgb(245, 245, 245);
+    private static readonly Color InlineCodeFill = Color.FromArgb(238, 238, 238);
+    private static readonly Color Highlight = Color.FromArgb(200, 220, 252);
+    private static readonly Color SystemFill = Color.FromArgb(254, 249, 238);
+    private static readonly Color SystemInk = Color.FromArgb(146, 92, 14);
 
-    private enum Kind { User, Assistant, Thinking, Tools, System }
+    private enum Kind { User, Assistant, Thinking, Tool, System, Image }
 
-    private sealed class Block(Kind kind, int index, ChatMessage message)
+    private sealed class Block(Kind kind, int index, int sub, ChatMessage message)
     {
         public Kind Kind { get; } = kind;
         public int Index { get; } = index;
+        public int Sub { get; } = sub;
         public ChatMessage Message { get; } = message;
+        public ChatImage? Image;
         public string Caption = "";
         public TextLayout Layout = null!;
+        public int LayoutWidth = -1;
+        public bool LayoutOpen, Previewed;
         public Rectangle CaptionRect, Bubble;
         public Point Origin;
+        public ChatToolCall? Call => Kind == Kind.Tool && Message.Role == ChatRole.Assistant ? Message.ToolCalls[Sub] : null;
     }
 
     private readonly record struct Caret(int Block, int Offset) : IComparable<Caret>
@@ -34,18 +48,20 @@ internal sealed class ChatView : Control
         public int CompareTo(Caret other) => Block != other.Block ? Block.CompareTo(other.Block) : Offset.CompareTo(other.Offset);
     }
 
-    private readonly VScrollBar bar = new() { Dock = DockStyle.Right, SmallChange = 40 };
+    private readonly VScrollBar bar = new() { Dock = DockStyle.Right, SmallChange = 48 };
     private readonly System.Windows.Forms.Timer dragScroll = new() { Interval = 40 };
     private readonly TextMeasurer measure = new();
     private readonly List<Block> blocks = [];
-    private readonly HashSet<(int, Kind)> expanded = [];
+    private readonly HashSet<(int, Kind, int)> expanded = [];
+    private readonly Dictionary<ChatImage, Image?> bitmaps = new(ReferenceEqualityComparer.Instance);
     private IReadOnlyList<ChatMessage> messages = [];
     private bool showThinking, showSystem, dragging, moved;
     private Caret anchor, focus;
     private Point downAt;
-    private int contentHeight;
+    private int contentHeight, hovered = -1;
 
     public event Action<string, string>? OpenFull;
+    public event Action<Image>? OpenImage;
 
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public string Placeholder { get; set { field = value; Invalidate(); } } = "正在读取对话…";
@@ -70,6 +86,7 @@ internal sealed class ChatView : Control
                 var plain = blocks[i].Layout.Plain;
                 var start = i == from.Block ? from.Offset : 0;
                 var end = i == to.Block ? to.Offset : plain.Length;
+                if (end <= start) continue;
                 if (text.Length > 0) text.Append("\n\n");
                 text.Append(plain, start, end - start);
             }
@@ -80,7 +97,7 @@ internal sealed class ChatView : Control
     public ChatView()
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
-        BackColor = DesktopTheme.Canvas;
+        BackColor = Color.White;
         TabStop = true;
         AccessibleName = "对话内容，可拖动选择文字，Ctrl+C 复制";
         Controls.Add(bar);
@@ -92,84 +109,147 @@ internal sealed class ChatView : Control
     {
         messages = value;
         expanded.Clear();
+        ClearBitmaps();
         bar.Value = 0;
         Rebuild();
     }
 
-    public string Transcript() => string.Join("\n\n", blocks.Select(b => (b.Caption.Length > 0 ? $"【{b.Caption}】\n" : "") + Body(b)));
+    public string Transcript() => string.Join("\n\n", blocks.Select(b => (b.Caption.Length > 0 ? $"【{b.Caption}】\n" : "") + FullText(b)));
 
     internal static string Crlf(string s) => s.Replace("\r\n", "\n").Replace("\n", "\r\n");
 
-    private static string Speaker(Kind kind) => kind switch { Kind.User => "你", Kind.System => "系统", _ => "Devin" };
+    private static string Speaker(ChatRole role) => role switch { ChatRole.User => "你", ChatRole.System => "系统", _ => "Devin" };
 
     private void Rebuild()
     {
         blocks.Clear();
         anchor = focus = default;
+        hovered = -1;
         for (var i = 0; i < messages.Count; i++)
         {
             var m = messages[i];
             switch (m.Role)
             {
-                case ChatRole.User: blocks.Add(new Block(Kind.User, i, m)); break;
-                case ChatRole.System when showSystem: blocks.Add(new Block(Kind.System, i, m)); break;
-                case ChatRole.Tool: blocks.Add(new Block(Kind.Tools, i, m)); break;
+                case ChatRole.User:
+                    if (!string.IsNullOrWhiteSpace(m.Text)) blocks.Add(new Block(Kind.User, i, 0, m));
+                    break;
+                case ChatRole.System when showSystem:
+                    blocks.Add(new Block(Kind.System, i, 0, m));
+                    break;
+                case ChatRole.System:
+                    continue;
+                case ChatRole.Tool:
+                    blocks.Add(new Block(Kind.Tool, i, 0, m));
+                    break;
                 case ChatRole.Assistant:
-                    if (showThinking && m.Thinking is not null) blocks.Add(new Block(Kind.Thinking, i, m));
-                    if (!string.IsNullOrWhiteSpace(m.Text)) blocks.Add(new Block(Kind.Assistant, i, m));
-                    if (m.ToolCalls.Count > 0) blocks.Add(new Block(Kind.Tools, i, m));
+                    if (showThinking && m.Thinking is not null) blocks.Add(new Block(Kind.Thinking, i, 0, m));
+                    if (!string.IsNullOrWhiteSpace(m.Text)) blocks.Add(new Block(Kind.Assistant, i, 0, m));
+                    for (var c = 0; c < m.ToolCalls.Count; c++)
+                    {
+                        blocks.Add(new Block(Kind.Tool, i, c, m));
+                        foreach (var image in m.ToolCalls[c].Images) blocks.Add(new Block(Kind.Image, i, c, m) { Image = image });
+                    }
                     break;
             }
+            foreach (var image in m.Images) blocks.Add(new Block(Kind.Image, i, -1, m) { Image = image });
         }
         string? last = null;
         foreach (var b in blocks)
         {
-            var who = Speaker(b.Kind);
+            var who = Speaker(b.Message.Role);
             b.Caption = who == last ? "" : $"{who} · {b.Message.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm}";
             last = who;
         }
         Relayout();
     }
 
-    private string Body(Block b)
+    private bool IsOpen(Block b) => expanded.Contains((b.Index, b.Kind, b.Sub));
+
+    // Complete, unclipped content of a block; used for copying and the full-text window.
+    private static string FullText(Block b)
     {
-        var open = expanded.Contains((b.Index, b.Kind));
+        var m = b.Message;
+        return b.Kind switch
+        {
+            Kind.Thinking => "思考过程\n\n" + m.Thinking,
+            Kind.Tool when b.Call is { } c => $"{c.Name}  {c.Summary}\n\n参数\n{(c.Arguments.Length > 0 ? c.Arguments : "（无）")}\n\n结果\n{(c.Result is null ? "（没有记录结果）" : c.Result.Trim())}",
+            Kind.Tool => "工具结果\n\n" + m.Text.Trim(),
+            Kind.Image => $"[图片 {b.Image!.Width}×{b.Image.Height}]",
+            _ => m.Text.Trim(),
+        };
+    }
+
+    private static readonly TextStyle Body = new(BodyFont, DesktopTheme.Ink);
+    private static readonly TextStyle Note = new(NoteFont, DesktopTheme.Muted);
+    private static readonly TextStyle NoteStrong = new(NoteBold, DesktopTheme.Accent);
+    private static readonly TextStyle Heading = new(CaptionFont, DesktopTheme.Faint);
+    private static readonly TextStyle Link = new(NoteFont, Color.FromArgb(37, 99, 235));
+    private static readonly TextStyle Code = new(Markdown.CodeFont, Markdown.CodeInk, true);
+
+    private static IEnumerable<Paragraph> CodeLines(string text) =>
+        Markdown.Plain(text.Length == 0 ? " " : text, Code).Select(p => p with { Code = true });
+
+    private static List<Paragraph> Paragraphs(Block b, bool open, out bool previewed)
+    {
+        previewed = false;
         var m = b.Message;
         switch (b.Kind)
         {
+            case Kind.Image:
+                return [new Paragraph([])];
             case Kind.Thinking:
-                return open ? "▾ 思考过程\n\n" + m.Thinking : "▸ 思考过程（点击展开）";
-            case Kind.Tools when m.Role == ChatRole.Tool:
-                return open ? "▾ 工具结果\n\n" + m.Text : "▸ 工具结果（点击展开）";
-            case Kind.Tools:
-                var head = $"调用工具 · {string.Join(", ", m.ToolCalls.Select(c => c.Name))}";
-                if (!open) return "▸ " + head;
-                return "▾ " + head + "\n\n" + string.Join("\n\n", m.ToolCalls.Select(c =>
-                    $"■ {c.Name}\n参数：{c.Arguments}\n结果：{(c.Result is null ? "（没有记录结果）" : c.Result.Trim())}"));
-            default:
-                return m.Text.Trim();
+                return [new Paragraph([new Run(open ? "▾  思考过程" : "▸  思考过程", Note)]), .. open ? Markdown.Plain(m.Thinking!, new TextStyle(ThinkingFont, DesktopTheme.Muted)) : []];
+            case Kind.Tool when b.Call is { } c:
+                var summary = c.Summary.Length > 96 ? c.Summary[..96] + "…" : c.Summary;
+                List<Paragraph> tool = [new Paragraph([new Run(open ? "▾  " : "▸  ", Note), new Run(c.Name, NoteStrong), new Run(summary.Length > 0 ? "   " + summary : "", Note)])];
+                if (!open) return tool;
+                tool.Add(new Paragraph([new Run("参数", Heading)]));
+                tool.AddRange(CodeLines(c.Arguments.Length > 0 ? c.Arguments : "（无）"));
+                tool.Add(new Paragraph([new Run("结果", Heading)]));
+                tool.AddRange(CodeLines(c.Result is null ? "（没有记录结果）" : c.Result.TrimEnd()));
+                return tool;
+            case Kind.Tool:
+                return [new Paragraph([new Run(open ? "▾  " : "▸  ", Note), new Run("工具结果", NoteStrong)]), .. open ? CodeLines(m.Text.TrimEnd()) : []];
         }
+        var text = m.Text.Trim();
+        string? more = null;
+        if (text.Length > PreviewLimit && !open)
+        {
+            more = $"▸  展开剩余 {text.Length - PreviewLimit:N0} 字（共 {text.Length:N0} 字）";
+            text = text[..PreviewLimit];
+            previewed = true;
+        }
+        var body = b.Kind switch
+        {
+            Kind.Assistant => Markdown.Parse(text, Body),
+            Kind.User => Markdown.Plain(text, Body),
+            _ => Markdown.Plain(text, new TextStyle(NoteFont, SystemInk)),
+        };
+        if (more is not null) body.Add(new Paragraph([new Run(more, Link)]));
+        return body;
     }
 
-    private static (Color Fill, Color Ink, Color Border, Color Highlight) Colors(Kind kind) => kind switch
+    private Size ImageSize(Block b, int column, float s)
     {
-        Kind.User => (DesktopTheme.Ink, Color.White, Color.Empty, Color.FromArgb(96, 110, 140)),
-        Kind.Assistant => (Color.White, DesktopTheme.Ink, DesktopTheme.Border, Color.FromArgb(198, 216, 246)),
-        Kind.Thinking => (Color.FromArgb(244, 239, 252), Color.FromArgb(112, 84, 158), Color.Empty, Color.FromArgb(214, 200, 240)),
-        Kind.Tools => (Color.FromArgb(239, 239, 234), DesktopTheme.Accent, Color.Empty, Color.FromArgb(198, 216, 246)),
-        _ => (Color.FromArgb(253, 246, 230), Color.FromArgb(152, 94, 19), Color.Empty, Color.FromArgb(246, 222, 170)),
-    };
+        var img = b.Image!;
+        var bitmap = Bitmap(img);
+        var (w, h) = img.Width > 0 && img.Height > 0 ? (img.Width, img.Height) : bitmap is null ? (320, 200) : (bitmap.Width, bitmap.Height);
+        var scale = Math.Min(1f, Math.Min(Math.Min(column * 0.7f, 440 * s) / w, 300 * s / h));
+        return new Size(Math.Max(1, (int)(w * scale)), Math.Max(1, (int)(h * scale)));
+    }
 
-    private static List<Paragraph> Paragraphs(Block b, string text)
+    private Image? Bitmap(ChatImage image)
     {
-        var ink = Colors(b.Kind).Ink;
-        return b.Kind switch
-        {
-            Kind.Assistant => Markdown.Parse(text, new TextStyle(BodyFont, ink)),
-            Kind.User => Markdown.Plain(text, new TextStyle(BodyFont, ink)),
-            Kind.Thinking => Markdown.Plain(text, new TextStyle(ThinkingFont, ink)),
-            _ => Markdown.Plain(text, new TextStyle(NoteFont, ink)),
-        };
+        if (bitmaps.TryGetValue(image, out var bitmap)) return bitmap;
+        try { bitmap = System.Drawing.Image.FromStream(new MemoryStream(image.Data)); }
+        catch (ArgumentException) { bitmap = null; }
+        return bitmaps[image] = bitmap;
+    }
+
+    private void ClearBitmaps()
+    {
+        foreach (var b in bitmaps.Values) b?.Dispose();
+        bitmaps.Clear();
     }
 
     private void Relayout()
@@ -177,26 +257,48 @@ internal sealed class ChatView : Control
         var width = ClientSize.Width - bar.Width;
         if (width <= 0 || !IsHandleCreated) return;
         var s = DeviceDpi / 96f;
-        int pad = (int)(20 * s), gap = (int)(14 * s), captionHeight = CaptionFont.Height + (int)(4 * s);
-        var bubbleMax = Math.Max((int)(160 * s), (int)((width - 2 * pad) * 0.78));
+        int pad = (int)(24 * s), gap = (int)(18 * s), tight = (int)(2 * s), captionHeight = CaptionFont.Height + (int)(6 * s);
+        var column = Math.Max((int)(200 * s), Math.Min(width - 2 * pad, (int)(800 * s)));
+        var left = Math.Max(pad / 2, (width - column) / 2);
         var y = pad;
         using var g = CreateGraphics();
         measure.Graphics = g;
+        Kind? previous = null;
         foreach (var b in blocks)
         {
-            var full = Body(b);
-            var text = full.Length > DisplayLimit ? full[..DisplayLimit] + "\n\n…（内容较长，右键「查看全文」）" : full.Length == 0 ? " " : full;
-            var inner = (int)((b.Kind is Kind.User or Kind.Assistant ? 12 : 8) * s);
-            var max = b.Kind == Kind.System ? width - 2 * pad : bubbleMax;
-            b.Layout = TextLayout.Build(Paragraphs(b, text), max - 2 * inner, BodyFont.Height / 2, measure);
-            var w = b.Layout.Width + 2 * inner;
-            var h = b.Layout.Height + 2 * inner;
-            b.CaptionRect = b.Caption.Length == 0 ? Rectangle.Empty : new Rectangle(pad, y, width - 2 * pad, captionHeight);
+            var open = IsOpen(b);
+            var (padX, padY) = b.Kind switch
+            {
+                Kind.User => ((int)(14 * s), (int)(10 * s)),
+                Kind.Assistant => (0, 0),
+                Kind.System => ((int)(12 * s), (int)(10 * s)),
+                Kind.Image => (0, 0),
+                _ => ((int)(10 * s), (int)((open ? 8 : 4) * s)),
+            };
+            var max = b.Kind == Kind.User ? (int)(column * 0.8) : column;
+            var layoutWidth = max - 2 * padX;
+            if (b.LayoutWidth != layoutWidth || b.LayoutOpen != open)
+            {
+                b.Layout = TextLayout.Build(Paragraphs(b, open, out b.Previewed), layoutWidth, BodyFont.Height / 2, measure);
+                b.LayoutWidth = layoutWidth;
+                b.LayoutOpen = open;
+            }
+            var compact = b.Kind is Kind.Tool or Kind.Thinking or Kind.Image && previous is Kind.Tool or Kind.Thinking or Kind.Image && b.Caption.Length == 0;
+            if (previous is not null) y += compact ? tight : gap;
+            b.CaptionRect = b.Caption.Length == 0 ? Rectangle.Empty : new Rectangle(left, y, column, captionHeight);
             y += b.CaptionRect.Height;
-            var x = b.Kind == Kind.User ? width - pad - w : b.Kind == Kind.System ? (width - w) / 2 : pad;
-            b.Bubble = new Rectangle(x, y, w, h);
-            b.Origin = new Point(x + inner, y + inner);
-            y += h + (b.Kind is Kind.Thinking or Kind.Tools ? gap / 2 : gap);
+            Size size = b.Kind switch
+            {
+                Kind.Image => ImageSize(b, column, s),
+                Kind.Tool or Kind.Thinking when open => new Size(column, b.Layout.Height + 2 * padY),
+                Kind.System => new Size(column, b.Layout.Height + 2 * padY),
+                _ => new Size(b.Layout.Width + 2 * padX, b.Layout.Height + 2 * padY),
+            };
+            var x = b.Message.Role == ChatRole.User ? left + column - size.Width : left;
+            b.Bubble = new Rectangle(new Point(x, y), size);
+            b.Origin = new Point(x + padX, y + padY);
+            y += size.Height;
+            previous = b.Kind;
         }
         measure.Graphics = null;
         contentHeight = y + pad;
@@ -213,9 +315,7 @@ internal sealed class ChatView : Control
 
     private (Caret From, Caret To) Ordered() => anchor.CompareTo(focus) <= 0 ? (anchor, focus) : (focus, anchor);
 
-    private bool HasSelection => anchor != focus;
-
-    // Nearest caret to a viewport point; points between bubbles snap to the closest block edge.
+    // Nearest caret to a viewport point; points between blocks snap to the closest block edge.
     private Caret CaretAt(Point p)
     {
         var at = new Point(p.X, p.Y + bar.Value);
@@ -225,28 +325,39 @@ internal sealed class ChatView : Control
             if (at.Y < b.Bubble.Top) return new Caret(i, 0);
             if (at.Y < b.Bubble.Bottom)
             {
-                if (at.X < b.Bubble.Left && b.Kind != Kind.User) return new Caret(i, 0);
+                if (at.X < b.Bubble.Left && b.Message.Role != ChatRole.User) return new Caret(i, 0);
                 return new Caret(i, b.Layout.OffsetAt(new Point(at.X - b.Origin.X, at.Y - b.Origin.Y)));
             }
         }
         return new Caret(blocks.Count - 1, blocks[^1].Layout.Plain.Length);
     }
 
-    private Block? Hit(Point p)
+    private int HitIndex(Point p)
     {
         var at = new Point(p.X, p.Y + bar.Value);
-        return blocks.FirstOrDefault(b => b.Bubble.Contains(at));
+        return blocks.FindIndex(b => b.Bubble.Contains(at));
     }
 
-    private static bool Collapsible(Block b) => b.Kind is Kind.Thinking or Kind.Tools;
+    private Block? Hit(Point p) => HitIndex(p) is var i and >= 0 ? blocks[i] : null;
 
-    // Collapsed blocks toggle anywhere; expanded ones only on their header line, so the body stays selectable.
-    private bool OnToggle(Block b, Point p) =>
-        Collapsible(b) && (!expanded.Contains((b.Index, b.Kind)) || p.Y + bar.Value - b.Origin.Y < b.Layout.Lines[0].Height);
+    // Collapsed rows toggle anywhere; expanded ones only on their header line, so the body
+    // stays selectable. Long messages expand from their final "展开剩余" line.
+    private bool OnToggle(Block b, Point p)
+    {
+        var dy = p.Y + bar.Value - b.Origin.Y;
+        if (b.Kind is Kind.Thinking or Kind.Tool) return !IsOpen(b) || dy < b.Layout.Lines[0].Height;
+        return b.Previewed && dy >= b.Layout.Lines[^1].Y;
+    }
+
+    private void Toggle(Block b)
+    {
+        if (!expanded.Add((b.Index, b.Kind, b.Sub))) expanded.Remove((b.Index, b.Kind, b.Sub));
+        Relayout();
+    }
 
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); Relayout(); }
     protected override void OnResize(EventArgs e) { base.OnResize(e); Relayout(); }
-    protected override void OnDpiChangedAfterParent(EventArgs e) { base.OnDpiChangedAfterParent(e); measure.Clear(); Relayout(); }
+    protected override void OnDpiChangedAfterParent(EventArgs e) { base.OnDpiChangedAfterParent(e); measure.Clear(); foreach (var b in blocks) b.LayoutWidth = -1; Relayout(); }
     protected override void OnMouseWheel(MouseEventArgs e) { base.OnMouseWheel(e); ScrollBy(-e.Delta * DeviceDpi / 96); }
     protected override bool IsInputKey(Keys keyData) => (keyData & Keys.KeyCode) is Keys.Up or Keys.Down or Keys.PageUp or Keys.PageDown or Keys.Home or Keys.End || base.IsInputKey(keyData);
 
@@ -279,7 +390,7 @@ internal sealed class ChatView : Control
             return;
         }
         if (e.Button != MouseButtons.Left) return;
-        if (e.Clicks == 2 && Hit(e.Location) is { } b && !OnToggle(b, e.Location))
+        if (e.Clicks == 2 && Hit(e.Location) is { Kind: not Kind.Image } b && !OnToggle(b, e.Location))
         {
             var i = blocks.IndexOf(b);
             anchor = new Caret(i, 0);
@@ -308,7 +419,17 @@ internal sealed class ChatView : Control
             Invalidate();
             return;
         }
-        Cursor = Hit(e.Location) is { } b ? OnToggle(b, e.Location) ? Cursors.Hand : Cursors.IBeam : Cursors.Default;
+        var index = HitIndex(e.Location);
+        var b = index >= 0 ? blocks[index] : null;
+        var hover = b is { Kind: Kind.Tool or Kind.Thinking } ? index : -1;
+        if (hover != hovered) { hovered = hover; Invalidate(); }
+        Cursor = b is null ? Cursors.Default : b.Kind == Kind.Image || OnToggle(b, e.Location) ? Cursors.Hand : Cursors.IBeam;
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (hovered >= 0) { hovered = -1; Invalidate(); }
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -318,9 +439,9 @@ internal sealed class ChatView : Control
         dragging = false;
         dragScroll.Enabled = false;
         Capture = false;
-        if (moved || e.Button != MouseButtons.Left || Hit(e.Location) is not { } b || !OnToggle(b, e.Location)) return;
-        if (!expanded.Add((b.Index, b.Kind))) expanded.Remove((b.Index, b.Kind));
-        Relayout();
+        if (moved || e.Button != MouseButtons.Left || Hit(e.Location) is not { } b) return;
+        if (b.Kind == Kind.Image) { if (Bitmap(b.Image!) is { } image) OpenImage?.Invoke(image); }
+        else if (OnToggle(b, e.Location)) Toggle(b);
     }
 
     private void DragTick()
@@ -333,11 +454,22 @@ internal sealed class ChatView : Control
 
     private void ShowMenu(Block b, Point at)
     {
-        var menu = new ContextMenuStrip { Font = NoteFont };
+        var menu = new ContextMenuStrip { Font = NoteFont, ShowImageMargin = false };
         var selection = SelectedText;
         menu.Items.Add("复制选中文字", null, (_, _) => Copy(selection)).Enabled = selection.Length > 0;
-        menu.Items.Add("复制这条（原文）", null, (_, _) => Copy(Body(b)));
-        menu.Items.Add("查看全文", null, (_, _) => OpenFull?.Invoke(b.Caption.Length > 0 ? b.Caption : Speaker(b.Kind), Body(b)));
+        if (b.Kind == Kind.Image)
+        {
+            menu.Items.Add("查看大图", null, (_, _) => { if (Bitmap(b.Image!) is { } image) OpenImage?.Invoke(image); });
+            menu.Items.Add("复制图片", null, (_, _) => { if (Bitmap(b.Image!) is { } image) CopyImage(image); });
+        }
+        else
+        {
+            menu.Items.Add("复制这条（完整原文）", null, (_, _) => Copy(FullText(b)));
+            menu.Items.Add("在窗口中查看全文", null, (_, _) => OpenFull?.Invoke(b.Caption.Length > 0 ? b.Caption : Speaker(b.Message.Role), FullText(b)));
+            if (b.Kind is Kind.Tool or Kind.Thinking || b.Previewed || (IsOpen(b) && b.Message.Text.Trim().Length > PreviewLimit))
+                menu.Items.Add(IsOpen(b) ? "收起" : "展开", null, (_, _) => Toggle(b));
+        }
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("复制全部对话", null, (_, _) => Copy(Transcript()));
         menu.Closed += (_, _) => BeginInvoke(menu.Dispose);
         menu.Show(this, at);
@@ -346,6 +478,12 @@ internal sealed class ChatView : Control
     internal static void Copy(string text)
     {
         try { if (text.Length > 0) Clipboard.SetText(Crlf(text)); }
+        catch (System.Runtime.InteropServices.ExternalException) { MessageBox.Show("剪贴板暂时被其他程序占用，请稍后重试。", "无法复制", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+    }
+
+    internal static void CopyImage(Image image)
+    {
+        try { Clipboard.SetImage(image); }
         catch (System.Runtime.InteropServices.ExternalException) { MessageBox.Show("剪贴板暂时被其他程序占用，请稍后重试。", "无法复制", MessageBoxButtons.OK, MessageBoxIcon.Information); }
     }
 
@@ -369,34 +507,73 @@ internal sealed class ChatView : Control
             if (top - offset > view.Bottom) break;
             if (b.Bubble.Bottom - offset < 0) continue;
             if (!b.CaptionRect.IsEmpty)
-                TextRenderer.DrawText(g, b.Caption, CaptionFont, new Rectangle(b.CaptionRect.X, b.CaptionRect.Y - offset, b.CaptionRect.Width, b.CaptionRect.Height), DesktopTheme.Muted,
-                    (b.Kind == Kind.User ? TextFormatFlags.Right : b.Kind == Kind.System ? TextFormatFlags.HorizontalCenter : TextFormatFlags.Left) | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
-            var (fill, _, border, highlight) = Colors(b.Kind);
-            g.SmoothingMode = SmoothingMode.AntiAlias;
+                TextRenderer.DrawText(g, b.Caption, CaptionFont, new Rectangle(b.CaptionRect.X, b.CaptionRect.Y - offset, b.CaptionRect.Width, b.CaptionRect.Height), DesktopTheme.Faint,
+                    (b.Message.Role == ChatRole.User ? TextFormatFlags.Right : TextFormatFlags.Left) | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
             var bubble = new Rectangle(b.Bubble.X, b.Bubble.Y - offset, b.Bubble.Width, b.Bubble.Height);
-            using (var path = DesktopTheme.RoundedRect(bubble, (b.Kind is Kind.User or Kind.Assistant ? 10 : 7) * s))
-            {
-                using (var brush = new SolidBrush(fill)) g.FillPath(brush, path);
-                if (border != Color.Empty) { using var pen = new Pen(border); g.DrawPath(pen, path); }
-            }
-            g.SmoothingMode = SmoothingMode.None;
+            PaintFrame(g, b, bubble, i == hovered, s);
+            if (b.Kind == Kind.Image) { PaintImage(g, b, bubble, s); continue; }
             var selStart = i < from.Block || i > to.Block ? -1 : i == from.Block ? from.Offset : 0;
             var selEnd = i == to.Block ? to.Offset : int.MaxValue;
-            PaintText(g, b, new Point(b.Origin.X, b.Origin.Y - offset), view, highlight, selStart, selEnd, s);
+            var codeWidth = b.Kind is Kind.Tool or Kind.Thinking or Kind.System ? bubble.Width - 2 * (b.Origin.X - b.Bubble.X) : b.Layout.Width;
+            PaintText(g, b, new Point(b.Origin.X, b.Origin.Y - offset), view, selStart, selEnd, codeWidth, s);
         }
     }
 
-    private static void PaintText(Graphics g, Block b, Point origin, Rectangle view, Color highlight, int selStart, int selEnd, float s)
+    private void PaintFrame(Graphics g, Block b, Rectangle bubble, bool hover, float s)
     {
-        using var codeFill = new SolidBrush(b.Kind == Kind.User ? Color.FromArgb(70, 70, 68) : Color.FromArgb(244, 244, 241));
-        using var selFill = new SolidBrush(highlight);
+        var open = IsOpen(b);
+        var (fill, border, radius) = b.Kind switch
+        {
+            Kind.User => (UserFill, Color.Empty, 16f),
+            Kind.System => (SystemFill, Color.Empty, 10f),
+            Kind.Tool or Kind.Thinking when open => (Color.White, DesktopTheme.Border, 10f),
+            Kind.Tool or Kind.Thinking when hover => (DesktopTheme.Hover, Color.Empty, 8f),
+            _ => (Color.Empty, Color.Empty, 0f),
+        };
+        if (fill == Color.Empty && border == Color.Empty) return;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var path = DesktopTheme.RoundedRect(bubble, radius * s);
+        if (fill != Color.Empty) { using var brush = new SolidBrush(fill); g.FillPath(brush, path); }
+        if (border != Color.Empty) { using var pen = new Pen(border); g.DrawPath(pen, path); }
+        g.SmoothingMode = SmoothingMode.None;
+    }
+
+    private void PaintImage(Graphics g, Block b, Rectangle rect, float s)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var path = DesktopTheme.RoundedRect(rect, 10 * s);
+        if (Bitmap(b.Image!) is { } image)
+        {
+            var state = g.Save();
+            g.SetClip(path);
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.DrawImage(image, rect);
+            g.Restore(state);
+        }
+        else
+        {
+            using var brush = new SolidBrush(CodeFill);
+            g.FillPath(brush, path);
+            TextRenderer.DrawText(g, "图片无法解码", NoteFont, rect, DesktopTheme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+        }
+        using var pen = new Pen(DesktopTheme.Border);
+        g.DrawPath(pen, path);
+        g.SmoothingMode = SmoothingMode.None;
+    }
+
+    private static void PaintText(Graphics g, Block b, Point origin, Rectangle view, int selStart, int selEnd, int codeWidth, float s)
+    {
+        using var codeFill = new SolidBrush(CodeFill);
+        using var inlineFill = new SolidBrush(InlineCodeFill);
+        using var selFill = new SolidBrush(Highlight);
         var layout = b.Layout;
+        var pad = (int)(6 * s);
         foreach (var line in layout.Lines)
         {
             var y = origin.Y + line.Y;
             if (y > view.Bottom) break;
             if (y + line.Height < 0) continue;
-            if (line.Code) g.FillRectangle(codeFill, origin.X - (int)(4 * s), y, layout.Width + (int)(8 * s), line.Height);
+            if (line.Code) g.FillRectangle(codeFill, origin.X - pad, y, codeWidth + 2 * pad, line.Height);
             if (line.Rule) { using var pen = new Pen(DesktopTheme.Border); g.DrawLine(pen, origin.X, y + line.Height / 2, origin.X + layout.Width, y + line.Height / 2); }
             if (selStart >= 0 && selStart <= line.End && selEnd > line.Start)
             {
@@ -410,15 +587,15 @@ internal sealed class ChatView : Control
             {
                 var font = seg.Style.Font;
                 var segY = y + line.Height - font.Height;
-                if (seg.Style.Code && !line.Code) g.FillRectangle(codeFill, origin.X + seg.X - 1, segY, seg.Right - seg.X + 2, font.Height);
-                TextRenderer.DrawText(g, seg.Text, font, new Point(origin.X + seg.X, segY), seg.Style.Code && b.Kind == Kind.User ? Color.White : seg.Style.Color, TextMeasurer.Flags);
+                if (seg.Style.Code && !line.Code) g.FillRectangle(inlineFill, origin.X + seg.X - 1, segY, seg.Right - seg.X + 2, font.Height);
+                TextRenderer.DrawText(g, seg.Text, font, new Point(origin.X + seg.X, segY), seg.Style.Color, TextMeasurer.Flags);
             }
         }
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) dragScroll.Dispose();
+        if (disposing) { dragScroll.Dispose(); ClearBitmaps(); }
         base.Dispose(disposing);
     }
 }

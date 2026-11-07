@@ -175,11 +175,47 @@ public sealed class CleanerTests
         Assert.DoesNotContain(messages, m => m.Role == ChatRole.Tool);
         var call = Assert.Single(messages.Single(m => m.ToolCalls.Count > 0).ToolCalls);
         Assert.Equal("grep", call.Name);
-        Assert.Contains("\"pattern\"", call.Arguments);
+        Assert.Equal("x", call.Summary);
+        Assert.Equal("pattern: x", call.Arguments);
         Assert.StartsWith(new string('r', Cleaner.ToolResultLimit), call.Result);
         Assert.Contains("未显示", call.Result);
         Assert.Equal("plan it", messages[3].Thinking);
         Assert.Equal("done", messages[^1].Text);
+    }
+
+    [Fact]
+    public void ConversationKeepsLongTextImagesAndReadableArguments()
+    {
+        using var fixture = new Fixture();
+        var id = Fixture.Ids[0];
+        var longText = string.Concat(Enumerable.Range(0, 3000).Select(i => $"第{i}行。"));
+        var png = Convert.ToBase64String([0x89, 0x50, 0x4E, 0x47, 1, 2, 3]);
+        using (var db = fixture.Open())
+        {
+            void Node(int n, int parent, object message) =>
+                Fixture.Exec(db, "INSERT INTO message_nodes (session_id,node_id,parent_node_id,chat_message,created_at) VALUES ($p0,$p1,$p2,$p3,1)", id, n, parent, System.Text.Json.JsonSerializer.Serialize(message));
+            Node(3, 2, new { role = "user", content = "[Image 1]\n" + longText, images = new[] { new { width = 10, height = 5, base64_data = png, mime_type = "image/png" } } });
+            Node(4, 3, new { role = "assistant", content = "", tool_calls = new object[]
+            {
+                new { id = "w1", name = "write", arguments = new { file_path = @"C:\x\a.txt", content = "line1\nline2" } },
+                new { id = "m1", name = "mcp_call_tool", arguments = new { server_name = "ida", tool_name = "decompile", arguments = new { addr = "0x10" } } },
+            } });
+            Node(5, 4, new { role = "tool", tool_call_id = "w1", content = "ok" });
+            Node(6, 5, new { role = "tool", tool_call_id = "m1", content = "[Image 1]", images = new[] { new { width = 1, height = 1, base64_data = png } } });
+            Fixture.Exec(db, "UPDATE sessions SET main_chain_id=6 WHERE id=$p0", id);
+        }
+        var messages = fixture.Cleaner.Conversation(id);
+        var user = messages.Single(m => m.Role == ChatRole.User && m.Images.Count > 0);
+        Assert.EndsWith(longText, user.Text);
+        Assert.Equal((10, 5), (user.Images[0].Width, user.Images[0].Height));
+        Assert.Equal(Convert.FromBase64String(png), user.Images[0].Data);
+        var calls = messages.Single(m => m.ToolCalls.Count == 2).ToolCalls;
+        Assert.Equal(@"C:\x\a.txt", calls[0].Summary);
+        Assert.Equal("file_path: C:\\x\\a.txt\ncontent:\nline1\nline2", calls[0].Arguments);
+        Assert.Equal("ok", calls[0].Result);
+        Assert.Equal("ida · decompile", calls[1].Summary);
+        Assert.Contains("\"addr\": \"0x10\"", calls[1].Arguments);
+        Assert.Single(calls[1].Images);
     }
 
     [Fact]

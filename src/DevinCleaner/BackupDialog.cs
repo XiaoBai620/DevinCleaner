@@ -13,6 +13,7 @@ internal sealed class BackupDialog : Form
     private readonly Button remove = DesktopTheme.Button("删除此备份");
     private readonly Button openFolder = DesktopTheme.Button("打开备份目录");
     private IReadOnlyList<BackupInfo> items = [];
+    private bool busy;
 
     public bool Changed { get; private set; }
 
@@ -22,6 +23,7 @@ internal sealed class BackupDialog : Form
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = "备份与恢复";
+        ShowIcon = false;
         ClientSize = new Size(900, 560);
         MinimumSize = new Size(760, 460);
         BackColor = DesktopTheme.Canvas;
@@ -63,28 +65,45 @@ internal sealed class BackupDialog : Form
 
         backupList.SelectedIndexChanged += (_, _) => RenderSessions();
         sessionList.ItemCheck += (_, _) => BeginInvoke(RenderButtons);
-        restore.Click += (_, _) => Restore();
-        remove.Click += (_, _) => DeleteBackup();
+        restore.Click += async (_, _) => await Restore();
+        remove.Click += async (_, _) => await DeleteBackup();
         openFolder.Click += (_, _) =>
         {
             Directory.CreateDirectory(cleaner.BackupRoot);
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cleaner.BackupRoot) { UseShellExecute = true });
         };
-        Shown += (_, _) => Reload();
+        Shown += async (_, _) => await Reload();
+        FormClosing += (_, e) => e.Cancel = busy;
     }
 
     private static Control Frame(Control inner, Padding margin)
     {
-        var frame = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(10), Margin = margin, CornerRadius = 8 };
+        var frame = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(10), Margin = margin, CornerRadius = 12 };
         frame.Controls.Add(inner);
         return frame;
     }
 
-    private void Reload(string? keep = null)
+    // Database work runs off the UI thread; restoring hundreds of MB takes several seconds.
+    private async Task Busy(string label, Func<Task> work)
     {
+        busy = true;
         UseWaitCursor = true;
-        try { items = cleaner.Backups(); }
-        finally { UseWaitCursor = false; }
+        status.Text = label;
+        status.ForeColor = DesktopTheme.Muted;
+        backupList.Enabled = sessionList.Enabled = restore.Enabled = remove.Enabled = false;
+        try { await work(); }
+        finally
+        {
+            busy = false;
+            UseWaitCursor = false;
+            backupList.Enabled = sessionList.Enabled = true;
+        }
+    }
+
+    private async Task Reload(string? keep = null)
+    {
+        await Busy("正在读取备份…", async () => items = await Task.Run(cleaner.Backups));
+        if (IsDisposed) return;
         backupList.BeginUpdate();
         backupList.Items.Clear();
         foreach (var b in items) backupList.Items.Add($"{b.CreatedAt:yyyy-MM-dd HH:mm} · {b.Sessions.Count} 个会话 · {Cleaner.FormatBytes(b.Bytes)}");
@@ -116,36 +135,37 @@ internal sealed class BackupDialog : Form
         status.Text = items.Count == 0 ? $"还没有备份。备份目录：{cleaner.BackupRoot}"
             : backup?.Problem is { } problem ? problem
             : $"已勾选 {restorable} 个可恢复的会话 · 已存在于当前数据库的会话会被跳过";
-        status.ForeColor = backup?.Problem is null ? DesktopTheme.Muted : Color.FromArgb(152, 94, 19);
+        status.ForeColor = backup?.Problem is null ? DesktopTheme.Muted : DesktopTheme.Warning;
     }
 
-    private void Restore()
+    private async Task Restore()
     {
         if (Current is not { } backup) return;
         var ids = backup.Sessions.Where((s, i) => s.BlockedReason is null && sessionList.GetItemChecked(i)).Select(s => s.Id).ToList();
         if (MessageBox.Show(this, $"将 {ids.Count} 个会话恢复到 Devin 数据库。\n恢复后需要在 Devin 中重新打开会话列表才能看到。", "确认恢复", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
         try
         {
-            var result = cleaner.Restore(backup.Path, ids);
+            RestoreResult? result = null;
+            await Busy($"正在恢复 {ids.Count} 个会话…", async () => result = await Task.Run(() => cleaner.Restore(backup.Path, ids)));
             Changed = true;
-            MessageBox.Show(this, $"已恢复 {result.Restored} 个会话" + (result.Skipped.Count > 0 ? $"，跳过 {result.Skipped.Count} 个已存在的会话" : "") + "。", "恢复完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, $"已恢复 {result!.Restored} 个会话" + (result.Skipped.Count > 0 ? $"，跳过 {result.Skipped.Count} 个已存在的会话" : "") + "。", "恢复完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception e) when (e is CleanerException or IOException or SqliteException)
         {
             MessageBox.Show(this, e.Message, "恢复未完成", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
-        Reload(backup.Path);
+        await Reload(backup.Path);
     }
 
-    private void DeleteBackup()
+    private async Task DeleteBackup()
     {
         if (Current is not { } backup) return;
         if (MessageBox.Show(this, $"永久删除这个备份？其中的 {backup.Sessions.Count} 个会话将无法再恢复。\n\n{backup.Path}", "删除备份", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
-        try { cleaner.DeleteBackup(backup.Path); }
+        try { await Busy("正在删除备份…", () => Task.Run(() => cleaner.DeleteBackup(backup.Path))); }
         catch (Exception e) when (e is CleanerException or IOException or UnauthorizedAccessException)
         {
             MessageBox.Show(this, e.Message, "删除未完成", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
-        Reload();
+        await Reload();
     }
 }

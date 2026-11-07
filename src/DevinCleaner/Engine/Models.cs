@@ -31,9 +31,11 @@ public sealed record ExecuteResult(string? BackupPath, int DeletedSessions, int 
 
 public enum ChatRole { User, Assistant, Tool, System }
 
-public sealed record ChatToolCall(string Id, string Name, string Arguments, string? Result);
+public sealed record ChatImage(byte[] Data, int Width, int Height);
 
-public sealed record ChatMessage(ChatRole Role, string Text, string? Thinking, IReadOnlyList<ChatToolCall> ToolCalls, DateTimeOffset CreatedAt);
+public sealed record ChatToolCall(string Id, string Name, string Summary, string Arguments, string? Result, IReadOnlyList<ChatImage> Images);
+
+public sealed record ChatMessage(ChatRole Role, string Text, string? Thinking, IReadOnlyList<ChatToolCall> ToolCalls, IReadOnlyList<ChatImage> Images, DateTimeOffset CreatedAt);
 
 public sealed record BackupInfo(string Path, DateTimeOffset CreatedAt, long Bytes, IReadOnlyList<SessionInfo> Sessions, string? Problem);
 

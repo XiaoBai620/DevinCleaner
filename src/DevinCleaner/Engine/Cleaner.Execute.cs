@@ -5,7 +5,7 @@ namespace DevinCleaner.Engine;
 
 public sealed partial class Cleaner
 {
-    public ExecuteResult Execute(string planId) => Exclusive(() =>
+    public ExecuteResult Execute(string planId, IProgress<string>? progress = null) => Exclusive(() =>
     {
         PlanState? state;
         lock (gate) plans.TryGetValue(planId, out state);
@@ -17,10 +17,12 @@ public sealed partial class Cleaner
         try
         {
             // Holding each session lock stops Devin from resuming the session while it is removed.
+            progress?.Report("正在锁定所选会话");
             foreach (var id in ids) held.Add(SessionLocks.Acquire(LockFile(id)));
             if (ids.Count > 0)
             {
-                backup = WriteBackup(state);
+                backup = WriteBackup(state, progress);
+                progress?.Report("正在从数据库删除会话");
                 Delete(state);
                 foreach (var h in held) h.RemoveOnRelease = true;
             }
@@ -36,6 +38,7 @@ public sealed partial class Cleaner
         }
         lock (gate) plans.Remove(planId);
 
+        if (plan.LockFiles.Count > 0) progress?.Report("正在删除孤立锁文件");
         var removed = plan.LockFiles.Count == 0 ? 0 : RemoveOrphanLocks(plan.LockFiles);
         return new ExecuteResult(backup, ids.Count, removed);
     });
@@ -51,8 +54,9 @@ public sealed partial class Cleaner
     private static partial Regex CreateTable();
 
     // The backup is committed and verified before the source is touched.
-    private string WriteBackup(PlanState state)
+    private string WriteBackup(PlanState state, IProgress<string>? progress)
     {
+        progress?.Report("正在备份所选会话");
         Directory.CreateDirectory(BackupRoot);
         var file = Path.Combine(BackupRoot, $"sessions-{DateTimeOffset.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..8]}.db");
         try
@@ -79,6 +83,7 @@ public sealed partial class Cleaner
                 }
                 transaction.Commit();
             }
+            progress?.Report("正在校验备份");
             foreach (var (id, stamp) in state.Stamps)
                 foreach (var table in Catalog.ChildTables.Append(Catalog.SessionTable))
                 {
