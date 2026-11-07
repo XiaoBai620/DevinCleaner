@@ -44,7 +44,7 @@ public sealed class MainFormTests
         Assert.False(Field<Button>(form, "preview").Enabled);
         Field<CheckBox>(form, "cleanLocks").Checked = true;
         Assert.True(Field<Button>(form, "preview").Enabled);
-        Assert.Contains("2 个", Field<Label>(form, "locksHint").Text);
+        Assert.Contains("2 个", Field<CheckBox>(form, "cleanLocks").Text);
     });
 
     private static MainForm Create(Fixture fixture)

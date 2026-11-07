@@ -47,7 +47,7 @@ internal sealed class MainForm : Form
     private readonly Button viewConversation = DesktopTheme.Button("查看对话", primary: true);
     private readonly CheckBox cleanLocks = new() { Text = "孤立锁文件", AutoSize = true, ForeColor = DesktopTheme.Ink, Font = new Font("Microsoft YaHei UI", 9.5f, FontStyle.Bold), AccessibleDescription = "可选，删除已没有对应会话的锁文件" };
     private readonly Label locksHint = DesktopTheme.Label(LocksHintText, 8f);
-    private const string LocksHintText = "会话删除后遗留的占用标记，几字节，删了不影响对话";
+    private const string LocksHintText = "会话删除后遗留的占用标记，删了不影响对话";
     private readonly ToolTip tip = new() { AutoPopDelay = 20000, InitialDelay = 400, ReshowDelay = 100, ShowAlways = true };
     private readonly System.Windows.Forms.Timer processTimer = new() { Interval = 3000 };
     private Snapshot? state;
@@ -556,7 +556,7 @@ internal sealed class MainForm : Form
         emptyState.Visible = list.Rows.Count == 0;
         list.Visible = list.Rows.Count > 0;
         listCount.Text = state is null ? "尚未加载" : $"{state.Sessions.Count} 个会话 · 显示 {list.Rows.Count} 个 · 数据库 {Cleaner.FormatBytes(state.DatabaseBytes)}";
-        locksHint.Text = state is null ? LocksHintText : $"{state.OrphanLocks.Count} 个 · {LocksHintText}";
+        cleanLocks.Text = state is null ? "孤立锁文件" : $"孤立锁文件（{state.OrphanLocks.Count} 个）";
         RenderDetails();
         RenderSelection();
     }
