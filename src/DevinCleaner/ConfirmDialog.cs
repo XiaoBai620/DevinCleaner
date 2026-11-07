@@ -15,6 +15,8 @@ internal sealed class ConfirmDialog : Form
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 1500 };
     private bool checking;
 
+    internal const string OrphanLocksHelp = "Devin 打开会话时会在 session_locks 里放一个只记录进程号的小文件（几字节），用来标记“正在使用”。会话被删除后这个文件常被遗留，就成了孤立锁文件。删除它们不影响任何对话，只是让目录更干净；正被占用的锁会自动跳过。";
+
     public ConfirmDialog(Plan plan, Func<string, bool> isRunning)
     {
         this.plan = plan;
@@ -93,8 +95,7 @@ internal sealed class ConfirmDialog : Form
         var overview = Section("本次范围",
         [
             ($"删除 {plan.Sessions.Count} 个会话", $"删除 {plan.Sessions.Count} 个会话的元数据、对话消息、工具调用、输入历史和渲染缓存。"),
-            (plan.Selection.CleanOrphanLocks ? $"孤立锁文件：删除 {plan.LockFiles.Count} 个" : "孤立锁文件：保留", "孤立锁文件是 session_locks 中没有对应会话、也没有被任何进程占用的 .lock 文件。"),
-            (plan.Selection.Compact ? "压缩数据库：执行" : "压缩数据库：不执行", "删除记录后数据库文件不会自动变小；压缩（VACUUM）会重写数据库以释放磁盘空间。"),
+            (plan.Selection.CleanOrphanLocks ? $"孤立锁文件：删除 {plan.LockFiles.Count} 个" : "孤立锁文件：保留", OrphanLocksHelp),
         ], true);
         Section("删除的会话", plan.Sessions.Select(s => (s.Title, $"{s.Title}\r\n\r\n会话 ID\r\n{s.Id}\r\n\r\n工作目录\r\n{s.WorkingDirectory}\r\n\r\n消息\r\n{s.Messages:N0} 条 · {Cleaner.FormatBytes(s.Bytes)}\r\n\r\n最后活动\r\n{s.LastActivityAt.ToLocalTime():yyyy-MM-dd HH:mm}")));
         Section("数据库变更", plan.Tables.Select(t => ($"{t.Name} · {t.Rows:N0} 条", $"{t.Name}\r\n{Catalog.Describe(t.Name)}\r\n\r\n删除 {t.Rows:N0} 条")));

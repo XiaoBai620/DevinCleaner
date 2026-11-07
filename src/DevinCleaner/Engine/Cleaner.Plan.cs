@@ -5,7 +5,7 @@ public sealed partial class Cleaner
     public Plan PlanCleanup(Selection selection)
     {
         var ids = selection.SessionIds.Distinct(StringComparer.Ordinal).ToList();
-        if (ids.Count == 0 && !selection.CleanOrphanLocks && !selection.Compact) throw new CleanerException("没有选择任何清理内容。");
+        if (ids.Count == 0 && !selection.CleanOrphanLocks) throw new CleanerException("没有选择任何清理内容。");
         var snapshot = Snapshot();
         if (ids.Count > 0 && !snapshot.Supported) throw new CleanerException("数据库结构未验证，不能删除会话。");
         var byId = snapshot.Sessions.ToDictionary(s => s.Id, StringComparer.Ordinal);
@@ -24,7 +24,6 @@ public sealed partial class Cleaner
             .Select(t => new PlanTable(t, stamps.Values.Sum(s => RowsOf(s, t)))).ToList();
         var warnings = new List<string>();
         if (ids.Count > 0) warnings.Add($"删除前会把所选会话的全部记录备份到 {BackupRoot}，可在「备份与恢复」中恢复。");
-        if (selection.Compact) warnings.Add($"压缩会重写整个数据库（当前 {FormatBytes(snapshot.DatabaseBytes)}），需要同等大小的临时磁盘空间；Devin 正在写入时会失败，不影响已完成的删除。");
         warnings.Add("Devin 的 summaries 目录中的历史摘要文件无法可靠对应到会话，本工具不修改它们。");
 
         var plan = new Plan(Guid.NewGuid().ToString("N"), DateTimeOffset.Now + Catalog.PlanLifetime, selection with { SessionIds = ids }, sessions,

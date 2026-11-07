@@ -14,7 +14,6 @@ public sealed partial class Cleaner
         var ids = plan.Selection.SessionIds;
         var held = new List<SessionLocks.Held>();
         string? backup = null;
-        var before = DatabaseBytes();
         try
         {
             // Holding each session lock stops Devin from resuming the session while it is removed.
@@ -38,13 +37,7 @@ public sealed partial class Cleaner
         lock (gate) plans.Remove(planId);
 
         var removed = plan.LockFiles.Count == 0 ? 0 : RemoveOrphanLocks(plan.LockFiles);
-        string? compactError = null;
-        if (plan.Selection.Compact)
-        {
-            try { Compact(); }
-            catch (SqliteException e) { compactError = $"压缩未完成（Devin 可能正在使用数据库，关闭 Devin 后可单独重试）：{e.Message}"; }
-        }
-        return new ExecuteResult(backup, ids.Count, removed, before, DatabaseBytes(), compactError);
+        return new ExecuteResult(backup, ids.Count, removed);
     });
 
     private void AssertUnchanged(SqliteConnection db, PlanState state)
@@ -134,13 +127,6 @@ public sealed partial class Cleaner
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
         return removed;
-    }
-
-    private void Compact()
-    {
-        using var db = Db.Open(DatabasePath, writable: true);
-        Db.Exec(db, "VACUUM");
-        Db.Exec(db, "PRAGMA wal_checkpoint(TRUNCATE)");
     }
 
     private static void TryDelete(string file)

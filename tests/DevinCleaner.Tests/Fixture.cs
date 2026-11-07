@@ -10,6 +10,14 @@ public sealed class Fixture : IDisposable
     public static readonly string[] Ids = ["alpha-session", "beta-session", "gamma-session"];
     private const string Prefix = "devin-cleaner-test-";
 
+    // Same chat_message shape Devin writes: system prompt, user turn, assistant reply.
+    public static readonly string[] Messages =
+    [
+        """{"message_id":"m0","role":"system","content":"invented system prompt","metadata":null}""",
+        """{"message_id":"m1","role":"user","content":"invented question","metadata":null}""",
+        """{"message_id":"m2","role":"assistant","content":"invented answer","metadata":null}""",
+    ];
+
     private static readonly List<SchemaObject> Schema =
         JsonSerializer.Deserialize<List<SchemaObject>>(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixture-schema.json")), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
 
@@ -51,10 +59,10 @@ public sealed class Fixture : IDisposable
         for (var v = 1; v <= 16; v++) Exec(db, "INSERT INTO refinery_schema_history VALUES ($p0,$p1,'2026-01-01','0')", v, $"migration_{v}");
         for (var i = 0; i < Ids.Length; i++)
         {
-            Exec(db, "INSERT INTO sessions (id,working_directory,backend_type,model,agent_mode,created_at,last_activity_at,title,hidden) VALUES ($p0,$p1,'local','synthetic-model','normal',$p2,$p3,$p4,$p5)",
+            Exec(db, "INSERT INTO sessions (id,working_directory,backend_type,model,agent_mode,created_at,last_activity_at,title,hidden,main_chain_id) VALUES ($p0,$p1,'local','synthetic-model','normal',$p2,$p3,$p4,$p5,2)",
                 Ids[i], $@"C:\synthetic\project-{i}", 1780000000L + i, 1780001000L + i, $"Synthetic chat {i + 1}", i == 2 ? 1 : 0);
             for (var n = 0; n < 3; n++)
-                Exec(db, "INSERT INTO message_nodes (session_id,node_id,parent_node_id,chat_message,created_at) VALUES ($p0,$p1,$p2,$p3,1)", Ids[i], n, n == 0 ? null : n - 1, $"{{\"text\":\"invented message {n}\"}}");
+                Exec(db, "INSERT INTO message_nodes (session_id,node_id,parent_node_id,chat_message,created_at) VALUES ($p0,$p1,$p2,$p3,1)", Ids[i], n, n == 0 ? null : n - 1, Messages[n]);
             Exec(db, "INSERT INTO tool_call_state VALUES ($p0,'call-1','{}','{}')", Ids[i]);
             Exec(db, "INSERT INTO prompt_history (content,timestamp,session_id) VALUES ('invented prompt',1,$p0)", Ids[i]);
             Exec(db, "INSERT INTO rendered_commits (session_id,sequence_number,rendered_html,created_at) VALUES ($p0,1,'<p>invented</p>',1)", Ids[i]);

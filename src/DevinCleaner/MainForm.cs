@@ -44,10 +44,10 @@ internal sealed class MainForm : Form
     private readonly TextBox details = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None, ScrollBars = ScrollBars.Vertical, WordWrap = true, BackColor = Color.White, ForeColor = DesktopTheme.Ink, Font = new Font("Microsoft YaHei UI", 9f), AccessibleName = "会话完整详情，可选择并复制" };
     private readonly Button copyDetails = DesktopTheme.Button("复制");
     private readonly Button expandDetails = DesktopTheme.Button("展开");
-    private readonly CheckBox cleanLocks = new() { Text = "孤立锁文件", AutoSize = true, ForeColor = DesktopTheme.Ink, Font = new Font("Microsoft YaHei UI", 9.5f, FontStyle.Bold), AccessibleDescription = "可选，删除没有对应会话的锁文件" };
-    private readonly Label locksHint = DesktopTheme.Label("删除 session_locks 中无对应会话的文件", 8f);
-    private readonly CheckBox compact = new() { Text = "压缩数据库", AutoSize = true, ForeColor = DesktopTheme.Ink, Font = new Font("Microsoft YaHei UI", 9.5f, FontStyle.Bold), AccessibleDescription = "可选，执行 VACUUM 释放磁盘空间" };
-    private readonly Label compactHint = DesktopTheme.Label("删除后执行 VACUUM，释放磁盘空间", 8f);
+    private readonly Button viewConversation = DesktopTheme.Button("查看对话", primary: true);
+    private readonly CheckBox cleanLocks = new() { Text = "孤立锁文件", AutoSize = true, ForeColor = DesktopTheme.Ink, Font = new Font("Microsoft YaHei UI", 9.5f, FontStyle.Bold), AccessibleDescription = "可选，删除已没有对应会话的锁文件" };
+    private readonly Label locksHint = DesktopTheme.Label(LocksHintText, 8f);
+    private const string LocksHintText = "会话删除后遗留的占用标记，几字节，删了不影响对话";
     private readonly ToolTip tip = new() { AutoPopDelay = 20000, InitialDelay = 400, ReshowDelay = 100, ShowAlways = true };
     private readonly System.Windows.Forms.Timer processTimer = new() { Interval = 3000 };
     private Snapshot? state;
@@ -110,7 +110,8 @@ internal sealed class MainForm : Form
         selectAll.Click += (_, _) => ToggleVisible();
         clearSelection.Click += (_, _) => { selected.Clear(); RenderSessions(); };
         cleanLocks.CheckedChanged += (_, _) => RenderSelection();
-        compact.CheckedChanged += (_, _) => RenderSelection();
+        list.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0 && e.ColumnIndex != 0) ShowConversation(); };
+        viewConversation.Click += (_, _) => ShowConversation();
         refresh.Click += async (_, _) => await Reload();
         backups.Click += async (_, _) => await ShowBackups();
         checkUpdates.Click += async (_, _) => await CheckForUpdates(manual: true);
@@ -155,6 +156,9 @@ internal sealed class MainForm : Form
         tip.SetToolTip(clearSearch, "清除搜索");
         tip.SetToolTip(backups, $"查看删除前自动生成的备份，并恢复其中的会话。\n备份目录：{cleaner.BackupRoot}");
         tip.SetToolTip(expandDetails, "在独立窗口查看完整详情");
+        tip.SetToolTip(viewConversation, "以聊天窗口查看这个会话的对话内容（只读）· 也可双击列表行");
+        tip.SetToolTip(cleanLocks, ConfirmDialog.OrphanLocksHelp);
+        tip.SetToolTip(locksHint, ConfirmDialog.OrphanLocksHelp);
         tip.SetToolTip(checkUpdates, "启动时自动检查 GitHub 正式版；也可点击重新检查。不发送本地会话数据。");
         RenderSelection();
     }
@@ -376,12 +380,13 @@ internal sealed class MainForm : Form
     {
         var sidebar = CreateLayout(1, 2);
         sidebar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        sidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 187));
+        sidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 128));
         var detailCard = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(16, 12, 12, 13), Margin = new Padding(0, 0, 0, 12), CornerRadius = 8 };
-        var detailLayout = CreateLayout(1, 3);
+        var detailLayout = CreateLayout(1, 4);
         detailLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         detailLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         detailLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        detailLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var detailHeading = CreateLayout(3, 1);
         detailHeading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         detailHeading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -407,15 +412,16 @@ internal sealed class MainForm : Form
         detailLayout.Controls.Add(detailStatus, 0, 1);
         details.Margin = new Padding(0, 5, 0, 0);
         detailLayout.Controls.Add(details, 0, 2);
+        viewConversation.Dock = DockStyle.Fill;
+        viewConversation.Margin = new Padding(0, 10, 4, 0);
+        detailLayout.Controls.Add(viewConversation, 0, 3);
         detailCard.Controls.Add(detailLayout);
         sidebar.Controls.Add(detailCard, 0, 0);
 
         var options = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(16, 12, 16, 11), Margin = Padding.Empty, CornerRadius = 8 };
-        var optionLayout = CreateLayout(1, 6);
+        var optionLayout = CreateLayout(1, 4);
         optionLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
         optionLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-        optionLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
-        optionLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
         optionLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
         optionLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         var optionTitle = DesktopTheme.Label("附加维护", 10f, true);
@@ -424,14 +430,12 @@ internal sealed class MainForm : Form
         var optionHint = DesktopTheme.Label("可选 · 可单独执行，不必勾选会话", 8f);
         optionHint.Dock = DockStyle.Fill;
         optionLayout.Controls.Add(optionHint, 0, 1);
-        cleanLocks.Margin = compact.Margin = new Padding(0, 3, 0, 0);
+        cleanLocks.Margin = new Padding(0, 3, 0, 0);
         optionLayout.Controls.Add(cleanLocks, 0, 2);
-        locksHint.Dock = compactHint.Dock = DockStyle.Fill;
-        locksHint.Padding = compactHint.Padding = new Padding(20, 0, 0, 0);
-        locksHint.AutoEllipsis = compactHint.AutoEllipsis = true;
+        locksHint.Dock = DockStyle.Fill;
+        locksHint.Padding = new Padding(20, 0, 0, 0);
+        locksHint.AutoEllipsis = true;
         optionLayout.Controls.Add(locksHint, 0, 3);
-        optionLayout.Controls.Add(compact, 0, 4);
-        optionLayout.Controls.Add(compactHint, 0, 5);
         options.Controls.Add(optionLayout);
         sidebar.Controls.Add(options, 0, 1);
         return sidebar;
@@ -552,8 +556,7 @@ internal sealed class MainForm : Form
         emptyState.Visible = list.Rows.Count == 0;
         list.Visible = list.Rows.Count > 0;
         listCount.Text = state is null ? "尚未加载" : $"{state.Sessions.Count} 个会话 · 显示 {list.Rows.Count} 个 · 数据库 {Cleaner.FormatBytes(state.DatabaseBytes)}";
-        locksHint.Text = state is null ? "删除 session_locks 中无对应会话的文件" : $"发现 {state.OrphanLocks.Count} 个无对应会话的锁文件";
-        compactHint.Text = state is null ? "删除后执行 VACUUM，释放磁盘空间" : $"当前 {Cleaner.FormatBytes(state.DatabaseBytes)} · 执行 VACUUM 释放空间";
+        locksHint.Text = state is null ? LocksHintText : $"{state.OrphanLocks.Count} 个 · {LocksHintText}";
         RenderDetails();
         RenderSelection();
     }
@@ -567,7 +570,7 @@ internal sealed class MainForm : Form
             detailStatus.ForeColor = DesktopTheme.Muted;
             details.Text = "点击列表中的会话，在这里查看完整标题、工作目录和消息统计。\r\n\r\n勾选方框才会加入清理范围。";
             details.SelectionStart = details.SelectionLength = 0;
-            copyDetails.Enabled = expandDetails.Enabled = false;
+            copyDetails.Enabled = expandDetails.Enabled = viewConversation.Enabled = false;
             return;
         }
         focusedId = s.Id;
@@ -581,6 +584,8 @@ internal sealed class MainForm : Form
             + (s.Hidden ? "\r\n\r\n可见性\r\n已在 Devin 中隐藏" : "");
         details.SelectionStart = details.SelectionLength = 0;
         copyDetails.Enabled = expandDetails.Enabled = true;
+        viewConversation.Enabled = !busy && s.Messages > 0;
+        viewConversation.Text = s.Messages > 0 ? "查看对话" : "没有对话内容";
     }
 
     private void RenderSelection()
@@ -593,7 +598,6 @@ internal sealed class MainForm : Form
         var parts = new List<string>();
         if (selected.Count > 0) parts.Add($"已选 {selected.Count} 个会话（{Cleaner.FormatBytes(bytes)}）");
         if (cleanLocks.Checked) parts.Add("孤立锁文件");
-        if (compact.Checked) parts.Add("压缩数据库");
         summary.Text = busy ? activity : parts.Count > 0 ? string.Join("  +  ", parts) : "尚未选择清理内容";
         selectionCount.Text = hidden > 0 ? $"筛选外仍有 {hidden} 个已选" : "先预览，再确认 · 删除前自动备份，可在「备份与恢复」中找回";
         selectionCount.ForeColor = hidden > 0 ? Color.FromArgb(152, 94, 19) : DesktopTheme.Muted;
@@ -605,7 +609,8 @@ internal sealed class MainForm : Form
         refresh.Enabled = search.Enabled = filter.Enabled = list.Enabled = backups.Enabled = !busy;
         clearSearch.Enabled = !busy && search.TextLength > 0;
         clearSearch.Visible = search.TextLength > 0;
-        cleanLocks.Enabled = compact.Enabled = !busy && state is not null;
+        cleanLocks.Enabled = !busy && state is not null;
+        viewConversation.Enabled = !busy && list.CurrentRow?.Tag is SessionInfo { Messages: > 0 };
         selectAll.Enabled = !busy && selectable.Count > 0;
         selectAll.Text = selectable.Count > 0 && selectable.All(s => selected.Contains(s.Id)) ? "取消结果选择" : "全选结果";
         clearSelection.Enabled = !busy && selected.Count > 0;
@@ -702,21 +707,26 @@ internal sealed class MainForm : Form
 
     private Task PreviewCleanup() => Run("正在生成清理预览…", async () =>
     {
-        var plan = await Task.Run(() => cleaner.PlanCleanup(new Selection([.. selected], cleanLocks.Checked, compact.Checked)));
+        var plan = await Task.Run(() => cleaner.PlanCleanup(new Selection([.. selected], cleanLocks.Checked)));
         if (!Confirm(plan)) return;
-        activity = plan.Selection.Compact ? "正在清理并压缩数据库，大数据库可能需要几分钟…" : "正在执行清理，请稍候…";
+        activity = "正在执行清理，请稍候…";
         RenderSelection();
         var result = await Task.Run(() => cleaner.Execute(plan.Id));
         selected.Clear();
-        cleanLocks.Checked = compact.Checked = false;
+        cleanLocks.Checked = false;
         await LoadState();
         var message = new List<string>();
         if (result.DeletedSessions > 0) message.Add($"已删除 {result.DeletedSessions} 个会话。\n备份：{result.BackupPath}");
         if (plan.Selection.CleanOrphanLocks) message.Add($"已删除 {result.RemovedLocks} 个孤立锁文件。");
-        if (plan.Selection.Compact && result.CompactError is null) message.Add($"数据库 {Cleaner.FormatBytes(result.BytesBefore)} → {Cleaner.FormatBytes(result.BytesAfter)}。");
-        if (result.CompactError is not null) message.Add(result.CompactError);
-        MessageBox.Show(this, string.Join("\n\n", message), "处理完成", MessageBoxButtons.OK, result.CompactError is null ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        MessageBox.Show(this, string.Join("\n\n", message), "处理完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
     });
+
+    private void ShowConversation()
+    {
+        if (busy || list.CurrentRow?.Tag is not SessionInfo { Messages: > 0 } session) return;
+        using var dialog = new ConversationDialog(cleaner, session);
+        dialog.ShowDialog(this);
+    }
 
     private bool Confirm(Plan plan)
     {

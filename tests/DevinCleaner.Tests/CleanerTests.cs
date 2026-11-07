@@ -146,17 +146,52 @@ public sealed class CleanerTests
     }
 
     [Fact]
-    public void CompactShrinksTheDatabaseAfterDeletion()
+    public void ConversationFollowsTheMainChain()
     {
         using var fixture = new Fixture();
+        var messages = fixture.Cleaner.Conversation(Fixture.Ids[0]);
+        Assert.Equal([ChatRole.System, ChatRole.User, ChatRole.Assistant], messages.Select(m => m.Role));
+        Assert.Equal("invented question", messages[1].Text);
+        Assert.Equal("invented answer", messages[2].Text);
+    }
+
+    [Fact]
+    public void ConversationSkipsAbandonedBranchesAndPairsToolResults()
+    {
+        using var fixture = new Fixture();
+        var id = Fixture.Ids[0];
         using (var db = fixture.Open())
-            for (var n = 10; n < 400; n++)
-                Fixture.Exec(db, "INSERT INTO message_nodes (session_id,node_id,chat_message,created_at) VALUES ($p0,$p1,$p2,1)", Fixture.Ids[0], n, new string('x', 4000));
-        var plan = fixture.Cleaner.PlanCleanup(new Selection([Fixture.Ids[0]], Compact: true));
-        var result = fixture.Cleaner.Execute(plan.Id);
-        Assert.Null(result.CompactError);
-        Assert.True(result.BytesAfter < result.BytesBefore / 2, $"{result.BytesBefore} -> {result.BytesAfter}");
-        Assert.Equal(7, fixture.Total(Fixture.Ids[1]));
+        {
+            void Node(int n, int parent, string json) =>
+                Fixture.Exec(db, "INSERT INTO message_nodes (session_id,node_id,parent_node_id,chat_message,created_at) VALUES ($p0,$p1,$p2,$p3,1)", id, n, parent, json);
+            Node(3, 1, """{"role":"assistant","content":"abandoned retry"}""");
+            Node(4, 2, """{"role":"assistant","content":"","thinking":{"thinking":"  plan it  ","signature":""},"tool_calls":[{"id":"t1","name":"grep","arguments":{"pattern":"x"}}]}""");
+            Node(5, 4, $$"""{"role":"tool","tool_call_id":"t1","content":"{{new string('r', Cleaner.ToolResultLimit + 50)}}"}""");
+            Node(6, 5, """{"role":"assistant","content":"done"}""");
+            Fixture.Exec(db, "UPDATE sessions SET main_chain_id=6 WHERE id=$p0", id);
+        }
+        var messages = fixture.Cleaner.Conversation(id);
+        Assert.DoesNotContain(messages, m => m.Text == "abandoned retry");
+        Assert.DoesNotContain(messages, m => m.Role == ChatRole.Tool);
+        var call = Assert.Single(messages.Single(m => m.ToolCalls.Count > 0).ToolCalls);
+        Assert.Equal("grep", call.Name);
+        Assert.Contains("\"pattern\"", call.Arguments);
+        Assert.StartsWith(new string('r', Cleaner.ToolResultLimit), call.Result);
+        Assert.Contains("未显示", call.Result);
+        Assert.Equal("plan it", messages[3].Thinking);
+        Assert.Equal("done", messages[^1].Text);
+    }
+
+    [Fact]
+    public void ConversationReadingDoesNotModifyTheDatabase()
+    {
+        using var fixture = new Fixture();
+        SqliteConnection.ClearAllPools();
+        var file = Path.Combine(fixture.DataRoot, "sessions.db");
+        using (var db = fixture.Open()) Fixture.Exec(db, "PRAGMA wal_checkpoint(TRUNCATE)");
+        var before = File.ReadAllBytes(file);
+        fixture.Cleaner.Conversation(Fixture.Ids[1]);
+        Assert.Equal(before, File.ReadAllBytes(file));
     }
 
     [Fact]

@@ -16,7 +16,7 @@ public sealed record SessionInfo(
 public sealed record Snapshot(
     IReadOnlyList<SessionInfo> Sessions, bool Supported, IReadOnlyList<string> OrphanLocks, long DatabaseBytes, IReadOnlyList<string> Warnings);
 
-public sealed record Selection(IReadOnlyList<string> SessionIds, bool CleanOrphanLocks = false, bool Compact = false);
+public sealed record Selection(IReadOnlyList<string> SessionIds, bool CleanOrphanLocks = false);
 
 public sealed record PlanTable(string Name, long Rows);
 
@@ -27,8 +27,13 @@ public sealed record Plan(
     public long DatabaseRows => Tables.Sum(t => t.Rows);
 }
 
-public sealed record ExecuteResult(
-    string? BackupPath, int DeletedSessions, int RemovedLocks, long BytesBefore, long BytesAfter, string? CompactError);
+public sealed record ExecuteResult(string? BackupPath, int DeletedSessions, int RemovedLocks);
+
+public enum ChatRole { User, Assistant, Tool, System }
+
+public sealed record ChatToolCall(string Id, string Name, string Arguments, string? Result);
+
+public sealed record ChatMessage(ChatRole Role, string Text, string? Thinking, IReadOnlyList<ChatToolCall> ToolCalls, DateTimeOffset CreatedAt);
 
 public sealed record BackupInfo(string Path, DateTimeOffset CreatedAt, long Bytes, IReadOnlyList<SessionInfo> Sessions, string? Problem);
 
