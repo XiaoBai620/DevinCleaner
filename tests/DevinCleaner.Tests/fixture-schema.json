@@ -1,0 +1,67 @@
+[
+  {
+    "name": "refinery_schema_history",
+    "type": "table",
+    "sql": "CREATE TABLE refinery_schema_history(\n             version int4 PRIMARY KEY,\n             name VARCHAR(255),\n             applied_on VARCHAR(255),\n             checksum VARCHAR(255))"
+  },
+  {
+    "name": "sessions",
+    "type": "table",
+    "sql": "CREATE TABLE sessions (\n  id TEXT PRIMARY KEY,\n  working_directory TEXT NOT NULL,\n  backend_type TEXT NOT NULL,\n  model TEXT NOT NULL,\n  agent_mode TEXT NOT NULL,\n  created_at INTEGER NOT NULL,\n  last_activity_at INTEGER NOT NULL, title TEXT, main_chain_id INTEGER, shell_last_seen_index INTEGER DEFAULT 0, cogs_json TEXT, workspace_dirs TEXT, hidden INTEGER NOT NULL DEFAULT 0, metadata TEXT)"
+  },
+  {
+    "name": "idx_sessions_activity",
+    "type": "index",
+    "sql": "CREATE INDEX idx_sessions_activity\n  ON sessions(last_activity_at DESC)"
+  },
+  {
+    "name": "prompt_history",
+    "type": "table",
+    "sql": "CREATE TABLE prompt_history (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  content TEXT NOT NULL,\n  timestamp INTEGER NOT NULL,\n  session_id TEXT NOT NULL\n, is_shell INTEGER NOT NULL DEFAULT 0)"
+  },
+  {
+    "name": "idx_prompt_history_timestamp",
+    "type": "index",
+    "sql": "CREATE INDEX idx_prompt_history_timestamp\n  ON prompt_history(timestamp DESC)"
+  },
+  {
+    "name": "idx_prompt_history_session",
+    "type": "index",
+    "sql": "CREATE INDEX idx_prompt_history_session\n  ON prompt_history(session_id)"
+  },
+  {
+    "name": "message_nodes",
+    "type": "table",
+    "sql": "CREATE TABLE message_nodes (\n  row_id INTEGER PRIMARY KEY AUTOINCREMENT,\n  session_id TEXT NOT NULL,\n  node_id INTEGER NOT NULL,           -- node_id within this session's forest\n  parent_node_id INTEGER,             -- NULL for root nodes\n  chat_message TEXT NOT NULL,\n  created_at INTEGER NOT NULL, metadata TEXT,\n  FOREIGN KEY (session_id) REFERENCES sessions(id),\n  UNIQUE(session_id, node_id)\n)"
+  },
+  {
+    "name": "idx_message_nodes_session",
+    "type": "index",
+    "sql": "CREATE INDEX idx_message_nodes_session\n  ON message_nodes(session_id)"
+  },
+  {
+    "name": "rendered_commits",
+    "type": "table",
+    "sql": "CREATE TABLE rendered_commits (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  session_id TEXT NOT NULL,\n  sequence_number INTEGER NOT NULL,\n  rendered_html TEXT NOT NULL,\n  created_at INTEGER NOT NULL,\n  FOREIGN KEY (session_id) REFERENCES sessions(id),\n  UNIQUE(session_id, sequence_number)\n)"
+  },
+  {
+    "name": "idx_rendered_commits_session",
+    "type": "index",
+    "sql": "CREATE INDEX idx_rendered_commits_session\n  ON rendered_commits(session_id, sequence_number)"
+  },
+  {
+    "name": "app_state",
+    "type": "table",
+    "sql": "CREATE TABLE app_state (\n    key TEXT PRIMARY KEY NOT NULL,\n    value TEXT NOT NULL\n)"
+  },
+  {
+    "name": "tool_call_state",
+    "type": "table",
+    "sql": "CREATE TABLE tool_call_state (\n    session_id    TEXT    NOT NULL,\n    tool_call_id  TEXT    NOT NULL,\n    -- Serialised acp::ToolCall JSON (the initial ToolCall event).\n    -- Nullable: may be absent for interrupted sessions where the tool result\n    -- was saved but resolve_and_commit did not complete.\n    tool_call_json     TEXT,\n    -- Serialised acp::ToolCallUpdate JSON (the final completion update).\n    tool_call_update_json TEXT,\n    PRIMARY KEY (session_id, tool_call_id),\n    FOREIGN KEY (session_id) REFERENCES sessions(id)\n)"
+  },
+  {
+    "name": "idx_sessions_hidden",
+    "type": "index",
+    "sql": "CREATE INDEX idx_sessions_hidden ON sessions(hidden)"
+  }
+]

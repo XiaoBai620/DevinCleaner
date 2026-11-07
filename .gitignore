@@ -1,0 +1,25 @@
+# Build output and temporary local work
+bin/
+obj/
+/dist/
+/TestResults/
+/notes.md
+*.log
+*.tmp
+*.zip
+*.user
+.vs/
+.idea/
+.vscode/
+__pycache__/
+# Never commit real Devin data or backups
+*.sqlite*
+*.db
+*.db-*
+*.lock
+!tests/**/*.json
+.env
+.env.*
+Backups/
+.DS_Store
+Thumbs.db

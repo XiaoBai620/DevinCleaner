@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DevinCleaner/DevinCleaner.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DevinCleaner.Tests/DevinCleaner.Tests.csproj" />
+  </Folder>
+</Solution>
