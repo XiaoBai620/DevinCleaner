@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.2.1</Version>
+    <Version>1.3.0</Version>
     <AssemblyTitle>Devin 对话清理台</AssemblyTitle>
     <Product>DevinCleaner</Product>
     <Company>XiaoBai620</Company>

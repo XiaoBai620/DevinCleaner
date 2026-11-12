@@ -24,7 +24,9 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Test with synthetic data
-        run: dotnet test tests/DevinCleaner.Tests -c Release
+        run: dotnet test DevinCleaner.slnx -c Release --logger "console;verbosity=normal" --blame-hang-timeout 3m --blame-hang-dump-type none --results-directory TestResults
+      - name: Verify update and rollback with isolated processes
+        run: python scripts/verify_update.py
       - name: Publish exe
         run: dotnet publish src/DevinCleaner -c Release -o dist
       - name: Check tag matches project version

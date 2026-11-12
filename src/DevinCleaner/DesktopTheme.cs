@@ -122,6 +122,64 @@ internal sealed class ThemeButton : Button
     }
 }
 
+// Keep the native range, value and accessibility provider; only replace its painting.
+internal sealed class ThemedProgressBar : ProgressBar
+{
+    public ThemedProgressBar()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+            ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw, true);
+        BackColor = Color.Transparent;
+        Style = ProgressBarStyle.Continuous;
+        TabStop = false;
+    }
+
+    protected override Size DefaultSize => new(100, 6);
+
+    protected override void OnDpiChangedAfterParent(EventArgs e) { base.OnDpiChangedAfterParent(e); Invalidate(); }
+    protected override void OnParentChanged(EventArgs e) { base.OnParentChanged(e); Invalidate(); }
+
+    protected override void OnPaintBackground(PaintEventArgs e) => e.Graphics.Clear(DesktopTheme.BackgroundOf(Parent));
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        if (Width < 2 || Height < 2) return;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        var height = Math.Min(Height - 1, Math.Max(1, (int)Math.Round(6 * DeviceDpi / 96f)));
+        var track = new Rectangle(0, (Height - height) / 2, Width - 1, height);
+        using var outline = DesktopTheme.RoundedRect(track, height / 2f);
+        using (var brush = new SolidBrush(DesktopTheme.Border)) e.Graphics.FillPath(brush, outline);
+        var range = (long)Maximum - Minimum;
+        if (range <= 0 || Value <= Minimum) return;
+        var width = Math.Clamp((int)Math.Round(track.Width * ((double)Value - Minimum) / range), 1, track.Width);
+        var filled = new Rectangle(RightToLeft == RightToLeft.Yes && RightToLeftLayout ? track.Right - width : track.Left,
+            track.Top, width, track.Height);
+        using var fill = DesktopTheme.RoundedRect(filled, height / 2f);
+        using var ink = new SolidBrush(DesktopTheme.Ink);
+        e.Graphics.FillPath(ink, fill);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        const int print = 0x0317, printClient = 0x0318;
+        if ((m.Msg == print || m.Msg == printClient) && m.WParam != IntPtr.Zero)
+        {
+            // DrawToBitmap supplies its target HDC; avoid the native themed renderer here.
+            using var graphics = Graphics.FromHdc(m.WParam);
+            using var paint = new PaintEventArgs(graphics, ClientRectangle);
+            OnPaintBackground(paint);
+            OnPaint(paint);
+            m.Result = IntPtr.Zero;
+            return;
+        }
+        var message = m.Msg;
+        base.WndProc(ref m);
+        // ProgressBar.Value/Minimum/Maximum are not virtual and have no change events.
+        // Their native messages still update accessibility before scheduling our repaint.
+        if (message is 0x0401 or 0x0402 or 0x0403 or 0x0405 or 0x0406) Invalidate();
+    }
+}
+
 internal class SurfacePanel : Panel
 {
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
