@@ -101,6 +101,7 @@ internal sealed class MainForm : Form
         root.Controls.Add(body, 0, 2);
         root.Controls.Add(BuildFooter(), 0, 3);
         Controls.Add(root);
+        RegisterSearchDismissal(this);
 
         filter.Items.AddRange(["全部会话", "可清理", "运行中", "已隐藏"]);
         filter.SelectedIndex = 0;
@@ -171,6 +172,19 @@ internal sealed class MainForm : Form
         tip.SetToolTip(locksHint, ConfirmDialog.OrphanLocksHelp);
         tip.SetToolTip(checkUpdates, "启动时自动检查 GitHub 正式版；也可点击重新检查。不发送本地会话数据。");
         RenderSelection();
+    }
+
+    private void RegisterSearchDismissal(Control control)
+    {
+        // Empty panels and labels do not take focus themselves. Keep the whole
+        // search field interactive, and let other inputs handle focus normally.
+        if (control is SearchField) return;
+        if (control is Panel or Label or DevinLogo || ReferenceEquals(control, this))
+            control.MouseDown += (_, _) =>
+            {
+                if (search.Parent?.ContainsFocus == true) ActiveControl = null;
+            };
+        foreach (Control child in control.Controls) RegisterSearchDismissal(child);
     }
 
     private static TableLayoutPanel CreateLayout(int columns, int rows)
